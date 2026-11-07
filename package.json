@@ -1,0 +1,30 @@
+{
+  "name": "@wish2333/dsh-superagent-wish",
+  "version": "0.1.0",
+  "description": "Personal super-agent preset for DeepSeek Harness — registers the 总控 mode with topic anchoring, layered requirement building, and worker dispatch.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-bundle",
+    "deepseek-harness",
+    "agent-preset"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,8 @@
+# Inserts the preset-manager entry for 总控 mode.
+# The manager registers the "总控" preset into the selector;
+# the instructions entry is only loaded when that preset is active.
+- insert:
+    - id: superagent-wish-manager
+      name: "@wish2333/dsh-superagent-wish"
+      config:
+        role: manager
