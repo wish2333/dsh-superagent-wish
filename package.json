@@ -16,6 +16,9 @@
   },
   "files": [
     "index.js",
+    "state.js",
+    "schema.js",
+    "working-units.js",
     "partner.js",
     "secretary.js",
     "worker-discoverer.js",
