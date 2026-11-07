@@ -85,7 +85,11 @@ const workingUnitRecord = record({
   state: requiredOneOf('running', 'waiting-for-decision', 'waiting-for-input', 'ended'),
   title: requiredString,
   source: requiredString,
-  sessionId: requiredString,
+  // The Partner Session this unit hangs on, the Worker Session it runs in, and
+  // the one directory that Session keeps from its first delivery to its last.
+  partnerSessionId: requiredString,
+  workerSessionId: requiredString,
+  directory: requiredString,
   inputs: stringList,
   undelivered: stringList,
   assignments: stringList,
