@@ -195,9 +195,10 @@ export function apply(ctx, config) {
   // source recorded, and the patrol task the policy asks for.
   //
   // The services these two read are named here rather than read off `ctx`:
-  // Cordis refuses a read of an injected name it has not provided. A Host
-  // without a Schedule service reads no event and opens no task, so the
-  // callback waits for one; a save says so where it would need it.
+  // Cordis refuses a read of an injected name it has not provided. The
+  // judgement loop reads no Schedule service, so a Host without one still
+  // judges the events the file source records; only the patrol task and the
+  // events it would observe are absent.
   // The file source reads its directories on its own timer, the way the
   // judgement loop polls. It starts here rather than from the `sources` preset's
   // row: a preset's rows load only when that preset mounts, and nothing ever
@@ -205,9 +206,9 @@ export function apply(ctx, config) {
   // a file dropped into a watched directory would never be seen.
   ctx.inject(['storageDomain', 'sessionController'], (filesCtx) => {
     applySources(filesCtx)
+    applyJudge(filesCtx)
   })
   ctx.inject(['storageDomain', 'sessionController', 'schedule'], (scheduleCtx) => {
-    applyJudge(scheduleCtx)
     applyScheduleFromPolicy(scheduleCtx)
   })
   // A Secretary starts beside every new Partner Session. The listener lives
