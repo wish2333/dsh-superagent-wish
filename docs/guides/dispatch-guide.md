@@ -135,7 +135,7 @@ Partner 按工作单元引用，不记 Worker 会话 id。追加输入投给这�
 接着上次的 [工作单元标题]：[新要求或问题]
 ```
 
-**三种交互都未实现**：`partner_followup`、`partner_stop`、`partner_list` 在代码里都不存在，现在只能重新派发。
+追加输入投给当前 Worker；运行中排到下一轮。`partner_followup` 不需要重新确认，也不重建工作目录。追加输入如果提出了授权范围尚未覆盖的内容，就把这部分并入工作单元的 `scope`，原范围留在 `previousScopes`，仍查得到。
 
 ---
 
@@ -162,9 +162,9 @@ Worker 类型：[启发者 / 执行者]
 | 启发者 | 读它写下的产出文件，提炼关键选项和盲点，整合进当前主题的需求模型，带回给你；原始输出不直接转贴 |
 | 执行者 | 核查交付物是否符合 task spec；符合则汇报结果；有偏差则用偏差汇报格式（见 `../spec/interaction-spec.md`） |
 
-回报由 Worker 调 `partner_report` 提交，经队列以 `steer` 送进 Partner。目标是让回报的 source 为 `agent-message`，Partner 按“某个 Worker 报了什么”来读；代码现在仍用 `user`，回报会和 wish 的话混在一起。
+回报由 Worker 调 `partner_report` 提交，以 `agent-message` 为来源、带 `form: 'relay'` 和发送方会话 id，用 `steer` 送进 Partner，Partner 按“某个 Worker 报了什么”来读。
 
-推不推由代码按状态决定：`ready`、`blocked`、`failed`、`dropped` 和提问推给 Partner，`progress` 不推。送进 Partner 的正文形如：
+推不推由代码按状态决定：`ready`、`blocked`、`failed` 和提问推给 Partner；`progress` 不推；`dropped` 直接结束单元，不发消息。送进 Partner 的正文形如：
 
 ```
 Worker (discoverer session superagent-wish-discoverer-mac-3f2a1b7c) "Explore macOS" reported ready:

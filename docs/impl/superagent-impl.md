@@ -111,13 +111,14 @@ export const inject = ['systemPrompt', 'tools', 'agents']
 | `partner_stop` | 只有 Partner | 中止当前这一轮；工作单元仍在，之后可以追问 | 已实现 |
 | `partner_list` | 只有 Partner | 查工作单元的状态和被判掉的外部事件 | 已实现，判掉的事件带时间、事件和理由 |
 | `partner_setup` | 只有 Partner | 读写判断规则与 `files`、`schedule` 两个事件源的配置块 | 已实现 |
-| `partner_report` | 两个 Worker preset | Worker 报状态和摘要 | 已实现，推给 Partner 见第三步 |
+| `partner_report` | 两个 Worker preset | Worker 报状态和摘要 | 已实现，按状态推给 Partner |
 | `partner_decide` | Secretary | 把一个事件的判断写回表 | 已实现 |
 | `partner_patrol` | Secretary | 定时任务到点时记录一次巡查 | 已实现 |
+| `partner_read_conversation` | Secretary | 只读地读当前 Partner 对话最近的几条消息 | 已实现 |
 
 附录入按工作单元的队列投递：Worker 用 `followup` 收下一条输入，空闲时开新一轮，运行中排到下一轮。Partner 按工作单元 id 引用，不记 Worker 会话 id。
 
-**现状**：八个工具都已实现。Worker 会话 id 与工作目录都由工作单元 id 派生（`superagent-wish-<工作单元 id>`），会话被外部删除时下次投递按同一个 id 重建。回报推给 Partner 的规则与 `waiting` 兜底还没有（第三步）。
+**现状**：九个工具都已实现。Worker 会话 id 与工作目录都由工作单元 id 派生（`superagent-wish-<工作单元 id>`），会话被外部删除时下次投递按同一个 id 重建。回报以 `agent-message` 推给 Partner，`ready`、`blocked`、`failed` 和提问推，`progress` 与 `dropped` 不推，一轮没有回报时补一条 `waiting`。
 
 **多任务体系**：Ticket / Input / Assignment / Mandate 这一档已经确定要做，方案见 `../design/working-unit.md`。这些模型不属于团队场景：个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
 
@@ -165,12 +166,12 @@ Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，�
 
 ### 现在缺什么
 
+本轮的六个工作单元已全部实现。以下机制有意留到以后做：
+
 | 缺的东西 | 现在的结果 |
 |---|---|
-| 回报推送 | `partner_report` 只写入表；Partner 收不到回报，也没有 `waiting` 兜底 |
-| 并发上限 | 派发不占槽位，同时跑几个执行者无法控制 |
-| 策略版本 | 建活时记的是固定值 `policy-1`，规则变化不重新校验 |
-| 授权 | 越界判断只靠 Worker 自报和 Partner 核查，无运行时拦截 |
+| 授权拦截 | 越界判断只靠 Worker 自报和 Partner 复核，无运行时拦截 |
+| 按规则归属重新校验 | 策略版本是整份规则与事件源配置的哈希，任何规则变化都会让旧授权复核不通过 |
 
 ---
 
