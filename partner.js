@@ -14,6 +14,8 @@ export const inject = ['systemPrompt', 'tools']
  */
 export const WORKER_SERVICES = ['sessionController', 'workspaceRegistry', 'permissionPresets', 'agents', 'workingDirectory']
 
+import { mkdir } from 'node:fs/promises'
+
 import { createReportChannel } from './report-channel.js'
 import { DISPATCH_TOOL, WORKER_KINDS } from './tools.js'
 
@@ -68,7 +70,11 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
     let resolved = await sessionController.resolveAgent(sessionId)
     let created = false
     if (resolved && resolved.error) {
-      const workspace = await workspaceRegistry.create(workspaceDirectory(args.title, workingDirectory && workingDirectory.defaultDirectory))
+      const directory = workspaceDirectory(args.title, baseDirectory(workingDirectory, caller, ctx))
+      // `workspaceRegistry.create` refuses a nonexistent path; it owns directories,
+      // it does not make them.
+      await mkdir(directory, { recursive: true })
+      const workspace = await workspaceRegistry.create(directory, args.title)
       await sessionController.create({ sessionId, workspaceId: workspace.id, agentPreset: preset })
       resolved = await sessionController.resolveAgent(sessionId)
       created = true
@@ -100,7 +106,26 @@ function slug(title) {
 }
 
 /**
- * The worker's own directory, under the Host's absolute deployment directory.
+ * The directory the worker's workspace is created under: the Partner session's
+ * own working directory, falling back to the Host deployment directory. The Host
+ * profile directory is never a sensible base — it holds the profile, not work.
+ */
+function baseDirectory(workingDirectory, sessionId, ctx) {
+  try {
+    const agent = ctx.agents && sessionId ? ctx.agents.get(sessionId) : undefined
+    if (agent && agent.session && workingDirectory && typeof workingDirectory.get === 'function') {
+      const own = workingDirectory.get(agent.session)
+      if (own && own.startsWith('/')) return own
+    }
+  } catch {
+    // Fall through to the deployment directory.
+  }
+  const fallback = workingDirectory && workingDirectory.defaultDirectory
+  return fallback && fallback.startsWith('/') ? fallback : process.cwd()
+}
+
+/**
+ * The worker's own directory, under the given absolute base.
  * `workspaceRegistry.create` rejects a relative path, so it is always joined onto
  * an absolute base rather than passed as a bare relative segment.
  */

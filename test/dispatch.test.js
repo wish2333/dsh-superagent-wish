@@ -1,4 +1,8 @@
 import { test } from 'node:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { createHost } from './host-fake.js'
 import { dispatch, workspaceDirectory } from '../partner.js'
@@ -103,14 +107,34 @@ test('a Host failure is translated into a one-line error result', async () => {
 
 // workspaceRegistry.create rejects a relative path: "Workspace path is not fully
 // qualified". The Host reports that only at runtime, so assert it here.
-test('a worker workspace path is always absolute', async () => {
+test('a worker workspace path is absolute, created, and under the Partner directory', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'superagent-wish-test-'))
   const { host } = hostWithSession()
-  host.ctx.workingDirectory = { defaultDirectory: '/Users/wish/workspace' }
-  await dispatch({ ...CONTEXT, ...host.ctx }, ARGS, CALLER)
+  host.ctx.workingDirectory = { defaultDirectory: '/deployment/default', get: () => base }
+  host.setAgent('partner-session', { id: 'partner-session', session: { id: 'partner-session' } })
 
-  const created = host.callsTo('workspaceRegistry.create')[0].args
-  assert.ok(created.startsWith('/'), `expected an absolute path, got ${created}`)
-  assert.equal(created, '/Users/wish/workspace/superagent-wish/write-the-report')
+  try {
+    await dispatch({ ...CONTEXT, ...host.ctx }, ARGS, CALLER)
+
+    const created = host.callsTo('workspaceRegistry.create')[0].args
+    assert.equal(created, `${base}/superagent-wish/write-the-report`)
+    // workspaceRegistry.create refuses a nonexistent directory, so dispatch makes it.
+    assert.ok(statSync(created).isDirectory(), 'the worker directory exists before registration')
+  } finally {
+    await rm(base, { recursive: true, force: true })
+  }
+})
+
+test('a missing Partner directory falls back to the deployment directory', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'superagent-wish-test-'))
+  const { host } = hostWithSession()
+  host.ctx.workingDirectory = { defaultDirectory: base }
+  try {
+    await dispatch({ ...CONTEXT, ...host.ctx }, ARGS, CALLER)
+    assert.equal(host.callsTo('workspaceRegistry.create')[0].args, `${base}/superagent-wish/write-the-report`)
+  } finally {
+    await rm(base, { recursive: true, force: true })
+  }
 })
 
 test('a missing deployment directory falls back to an absolute path anyway', () => {
