@@ -188,7 +188,7 @@ export function decision(tables, record, args) {
 }
 
 /** The sentence the Secretary reads for one decision, and the row it was written to. */
-function decided(decision, row) {
+function decisionResult(decision, row) {
   return textResult(decision.decision === 'drop'
     ? `Event ${row.id} dropped: ${decision.reason}`
     : `Event ${row.id} opened ${decision.unitId}.`, { event: row.id, decision: decision.decision, ...(decision.unitId ? { unitId: decision.unitId } : {}) })
@@ -217,7 +217,7 @@ export async function decide(ctx, store, policy, args, exec) {
   if (!principal) return refuse(`Decide refused: event ${event.id} names no conversation to run the unit under.`)
   if (checked.decision.decision === 'drop') {
     const row = await store.judgeEvent(event.id, { status: 'dropped', reason: checked.decision.reason, principal })
-    return decided({ decision: 'drop', reason: checked.decision.reason }, row)
+    return decisionResult({ decision: 'drop', reason: checked.decision.reason }, row)
   }
   const { type, title, body } = checked.decision
   const exec_ = { agent: { id: principal, session: { id: principal } }, callId: undefined, signal: undefined }
@@ -228,7 +228,7 @@ export async function decide(ctx, store, policy, args, exec) {
   if (!unitId) return refuse(`The unit was not opened, so the event stays waiting. ${text}`)
   const row = await store.judgeEvent(event.id, { status: 'opened', unitId, principal })
   await advance(ctx, () => openPump(ctx, store, () => slots))
-  return decided({ decision: 'open', unitId }, row)
+  return decisionResult({ decision: 'open', unitId }, row)
 }
 
 /**

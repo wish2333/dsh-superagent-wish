@@ -17,7 +17,7 @@ import { openPump, slotsFor } from './pump.js'
 import { nextToStart, slotsFrom } from './queue.js'
 import { turnEnded } from './relay.js'
 import { sharedStore } from './working-units.js'
-import { deliver, describe, ensureWorker, refuse, selectModel, stop, textResult, unitDirectory, WORKER_TYPES, workerSessionId } from './sessions.js'
+import { cancelTurn, deliver, describe, ensureWorker, refuse, selectModel, textResult, unitDirectory, WORKER_TYPES, workerSessionId } from './sessions.js'
 
 export const inject = ['systemPrompt', 'tools', 'storageDomain']
 
@@ -62,14 +62,14 @@ export function since(iso, now) {
 
 /** The list line for one unit: name, type, state and how long it has been in that state. */
 export function describeUnit(unit, now = Date.now(), { history = false } = {}) {
-  const since_ = unit.state === 'ended' ? unit.ended?.at : unit.updatedAt
+  const stateSince = unit.state === 'ended' ? unit.ended?.at : unit.updatedAt
   const line = {
     id: unit.id,
     name: unit.title,
     type: unit.type,
     state: unit.state,
-    since: since_ ? `${since(since_, now)} ${unit.state === 'ended' ? 'ago' : 'in this state'}` : 'unknown',
-    sinceAt: since_ ?? null,
+    since: stateSince ? `${since(stateSince, now)} ${unit.state === 'ended' ? 'ago' : 'in this state'}` : 'unknown',
+    sinceAt: stateSince ?? null,
   }
   const notices = (unit.inputs ?? [])
     .filter((input) => input.kind === 'policy-changed')
@@ -419,15 +419,16 @@ export async function followup(ctx, store, policy, args, exec) {
 }
 
 /**
- * `partner_stop`: cancel the Worker's turn. The unit keeps its state, its
- * directory and its queued input, and the next follow-up continues it.
+ * `partner_stop`: cancel the Worker's turn and end the assignment. The unit
+ * keeps its state, its directory and its queued input, and the next follow-up
+ * continues it.
  */
-async function stopUnit(ctx, store, slots, args) {
+async function stopAssignment(ctx, store, slots, args) {
   const unitId = String(args.unitId ?? '').trim()
   const unit = store.get(unitId)
   if (!unit) return refuse(`Stop refused: there is no working unit ${unitId}.`)
   if (unit.state === 'ended') return refuse(`Stop refused: working unit ${unitId} has already ended.`)
-  const cancelled = stop(ctx, unit)
+  const cancelled = cancelTurn(ctx, unit)
   await store.stop(unitId, args.reason ? String(args.reason) : 'stopped by wish')
   // The stop ended the assignment, so it gave a slot back: a queued unit starts.
   await advance(ctx, () => openPump(ctx, store, () => slots))
@@ -440,7 +441,7 @@ async function stopUnit(ctx, store, slots, args) {
 }
 
 /** The `rules` a call passes, validated, with every field the policy record holds. */
-function rulesOf(value) {
+function checkedRules(value) {
   if (!Array.isArray(value)) throw new Error('rules must be a list of rule objects')
   const ids = new Set()
   return value.map((rule, index) => {
@@ -508,7 +509,7 @@ export async function setup(ctx, store, args, exec) {
   await sharedPolicy(ctx).then((record) => setPrincipal(ctx, record, principal))
 
   if (saving === 'rules') {
-    const rules = rulesOf(settings.rules)
+    const rules = checkedRules(settings.rules)
     const { from, to, notified } = await savePolicy(policy, store, ctx, { rules }, exec?.agent?.session)
     const changed = from === to ? 'The rules are unchanged.' : `Saved ${rules.length} rule${rules.length === 1 ? '' : 's'}; the policy version is now ${to}.`
     return textResult(`${changed} ${notified.length ? `${notified.length} open working unit(s) were told the rules changed.` : ''}`.trim(), { from, to, rules: rules.length, notified })
@@ -614,7 +615,7 @@ export function apply(ctx, config) {
       const bodies = {
         partner_dispatch: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => dispatch(workerCtx, handle, rules, slots, args, exec))),
         partner_followup: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => followup(workerCtx, handle, rules, args, exec))),
-        partner_stop: guarded((args) => store().then((handle) => stopUnit(workerCtx, handle, slots, args))),
+        partner_stop: guarded((args) => store().then((handle) => stopAssignment(workerCtx, handle, slots, args))),
         partner_list: guarded((args) => store().then((handle) => listUnits(handle, args))),
         partner_setup: guarded((args, exec) => store().then((handle) => setup(workerCtx, handle, args, exec))),
       }

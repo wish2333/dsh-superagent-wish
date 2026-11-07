@@ -171,7 +171,7 @@ export async function deliver(ctx, unit, input, session) {
  *
  * @returns `true` when a live Worker was cancelled, `false` when none was running
  */
-export function stop(ctx, unit) {
+export function cancelTurn(ctx, unit) {
   const agent = ctx.agents?.get(unit.workerSessionId ?? workerSessionId(unit.id))
   if (!agent) return false
   // `keepInbox` is the real Agent's option: a stop ends this turn, not the input already queued behind it.

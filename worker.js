@@ -61,9 +61,6 @@ export const REPORT_TOOL = {
   },
 }
 
-/** This Worker Session's working unit id, from `superagent-wish-<unit id>`. */
-export const UNIT_SESSION = WORKER_SESSION
-
 /**
  * The record a report writes. The store applies it to the unit the same way it
  * applies one the plugin found itself, so a Worker cannot set a state the unit
