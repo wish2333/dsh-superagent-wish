@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost } from './host-fake.js'
-import { dispatch } from '../partner.js'
+import { dispatch, workspaceDirectory } from '../partner.js'
 
 const CONTEXT = { systemPrompt: { section: () => () => {} }, tools: { register: () => () => {} } }
 
@@ -99,4 +99,27 @@ test('a Host failure is translated into a one-line error result', async () => {
   const result = await dispatch({ ...CONTEXT, ...host.ctx }, ARGS, CALLER)
   assert.equal(result.isError, true)
   assert.match(result.content[0].text, /disk is full/)
+})
+
+// workspaceRegistry.create rejects a relative path: "Workspace path is not fully
+// qualified". The Host reports that only at runtime, so assert it here.
+test('a worker workspace path is always absolute', async () => {
+  const { host } = hostWithSession()
+  host.ctx.workingDirectory = { defaultDirectory: '/Users/wish/workspace' }
+  await dispatch({ ...CONTEXT, ...host.ctx }, ARGS, CALLER)
+
+  const created = host.callsTo('workspaceRegistry.create')[0].args
+  assert.ok(created.startsWith('/'), `expected an absolute path, got ${created}`)
+  assert.equal(created, '/Users/wish/workspace/superagent-wish/write-the-report')
+})
+
+test('a missing deployment directory falls back to an absolute path anyway', () => {
+  assert.ok(workspaceDirectory('A task', undefined).startsWith('/'))
+  assert.ok(workspaceDirectory('A task', '').startsWith('/'))
+  assert.equal(workspaceDirectory('A task', '/base/'), '/base/superagent-wish/a-task')
+})
+
+test('the dispatch path declares the service that supplies the base directory', async () => {
+  const { WORKER_SERVICES } = await import('../partner.js')
+  assert.ok(WORKER_SERVICES.includes('workingDirectory'))
 })

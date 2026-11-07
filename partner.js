@@ -7,6 +7,13 @@
 
 export const inject = ['systemPrompt', 'tools']
 
+/**
+ * Host services the dispatch path and the report channel read. Cordis refuses a
+ * property read on a service a plugin did not declare, so these are declared on
+ * the child scope that registers the tool rather than on the preset itself.
+ */
+export const WORKER_SERVICES = ['sessionController', 'workspaceRegistry', 'permissionPresets', 'agents', 'workingDirectory']
+
 import { createReportChannel } from './report-channel.js'
 import { DISPATCH_TOOL, WORKER_KINDS } from './tools.js'
 
@@ -50,9 +57,9 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
   if (!caller) {
     return failed('Dispatch needs the calling Partner session; this tool was called without one, so a worker could not report back.')
   }
-  const { sessionController, workspaceRegistry, permissionPresets, agents } = ctx
+  const { sessionController, workspaceRegistry, permissionPresets, agents, workingDirectory } = ctx
   if (!sessionController || !workspaceRegistry || !permissionPresets || !agents) {
-    return failed('Worker dispatch needs the sessionController, workspaceRegistry, permissionPresets and agents Host services.')
+    return failed('Worker dispatch needs the sessionController, workspaceRegistry, permissionPresets, agents and workingDirectory Host services.')
   }
 
   try {
@@ -61,7 +68,7 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
     let resolved = await sessionController.resolveAgent(sessionId)
     let created = false
     if (resolved && resolved.error) {
-      const workspace = await workspaceRegistry.create(workspaceDirectory(args.title))
+      const workspace = await workspaceRegistry.create(workspaceDirectory(args.title, workingDirectory && workingDirectory.defaultDirectory))
       await sessionController.create({ sessionId, workspaceId: workspace.id, agentPreset: preset })
       resolved = await sessionController.resolveAgent(sessionId)
       created = true
@@ -92,8 +99,14 @@ function slug(title) {
   return String(title).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'task'
 }
 
-function workspaceDirectory(title) {
-  return `superagent-wish/${slug(title)}`
+/**
+ * The worker's own directory, under the Host's absolute deployment directory.
+ * `workspaceRegistry.create` rejects a relative path, so it is always joined onto
+ * an absolute base rather than passed as a bare relative segment.
+ */
+export function workspaceDirectory(title, base) {
+  const root = base && base.startsWith('/') ? base : process.cwd()
+  return `${root.replace(/\/+$/, '')}/superagent-wish/${slug(title)}`
 }
 
 export const ROLE_SECTION_TEXT = `## Partner 协作模式
@@ -179,7 +192,14 @@ export function apply(ctx) {
       text: ROLE_SECTION_TEXT,
     }),
   )
-  // The channel lives in this closure: Cordis forbids assigning onto the context.
-  const reportChannel = bindReportChannel(ctx)
-  ctx.effect(() => ctx.tools.register({ ...DISPATCH_TOOL, execute: (args, exec) => dispatch(ctx, args, exec, reportChannel) }))
+  // The dispatch path and the report channel read four Host services. Cordis
+  // refuses a read of an undeclared service ("cannot get property ... without
+  // inject"), so both live in a child scope that declares them. Missing services
+  // leave the tool absent instead of failing the whole preset.
+  ctx.inject(WORKER_SERVICES, (workerCtx) => {
+    const reportChannel = bindReportChannel(workerCtx)
+    workerCtx.effect(() =>
+      workerCtx.tools.register({ ...DISPATCH_TOOL, execute: (args, exec) => dispatch(workerCtx, args, exec, reportChannel) }),
+    )
+  })
 }

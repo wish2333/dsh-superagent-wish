@@ -28,7 +28,7 @@ Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，
 | 步骤 | 接口 | 说明 |
 |---|---|---|
 | 0. 查会话 | `ctx.sessionController.resolveAgent(sessionId)` | 会话已存在就复用，不重复创建 |
-| 1. 建工作目录 | `ctx.workspaceRegistry.create(cwd)` | 每个 Worker 一个独立目录 |
+| 1. 建工作目录 | `ctx.workspaceRegistry.create(cwd)` | 每个 Worker 一个独立目录；`cwd` 必须是绝对路径，由 `workingDirectory.defaultDirectory` 拼出 |
 | 2. 起 Worker 会话 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` | `agentPreset` 指定启发者或执行者 |
 | 3. 取到会话 | `ctx.sessionController.resolveAgent(sessionId)` | 返回 live Agent |
 | 4. 设权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` | 与原型一致 |

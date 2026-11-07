@@ -73,6 +73,19 @@ export function createHost(options = {}) {
       const result = run()
       return () => {}
     },
+    /**
+     * Mirrors Cordis: the callback runs only when every named service is
+     * present, and the child context is the parent. `missing` lists the
+     * services a test wants to be absent.
+     */
+    inject(names, callback) {
+      const missing = (options.missing ?? []).filter((name) => names.includes(name))
+      if (missing.length > 0) {
+        record('inject.pending', { names, missing })
+        return
+      }
+      callback(ctx)
+    },
     on(name, handler) {
       const set = listeners.get(name) ?? new Set()
       set.add(handler)

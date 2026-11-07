@@ -68,3 +68,29 @@ test('a tool carries execute on its definition, never in the registration option
     assert.equal(registration.args.options?.execute, undefined, `${path} leaves execute out of the options`)
   }
 })
+
+// Cordis refuses a read of an undeclared service. The dispatch tool reads four
+// Host services, so it must be registered inside a scope that declares them.
+test('the dispatch tool registers only inside a scope that declares its services', async () => {
+  const { apply: mount, WORKER_SERVICES } = await import('../partner.js')
+  const host = createHost()
+  mount(host.ctx)
+
+  const [pending] = host.callsTo('inject.pending')
+  assert.equal(pending, undefined, 'every service the dispatch path reads must exist')
+  assert.deepEqual(host.callsTo('tools.register').length, 1)
+  for (const service of ['sessionController', 'workspaceRegistry', 'permissionPresets', 'agents']) {
+    assert.ok(WORKER_SERVICES.includes(service), `declares ${service}`)
+  }
+})
+
+test('a missing Host service leaves the tool absent instead of failing the preset', async () => {
+  const { apply: mount } = await import('../partner.js')
+  const host = createHost({ missing: ['sessionController'] })
+  mount(host.ctx)
+
+  assert.equal(host.callsTo('tools.register').length, 0)
+  assert.equal(host.callsTo('inject.pending').length, 1)
+  // The prompt section still mounts: a missing worker service must not break Partner.
+  assert.equal(host.callsTo('systemPrompt.section').length, 1)
+})
