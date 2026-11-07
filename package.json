@@ -1,12 +1,13 @@
 {
   "name": "@wish2333/dsh-superagent-wish",
   "version": "0.1.0",
-  "description": "Personal super-agent preset for DeepSeek Harness — registers the Partner mode with topic anchoring, layered requirement building, and worker dispatch.",
+  "description": "Personal super-agent preset for DeepSeek Harness — Partner talks with wish and dispatches work to Workers, each working unit keeps its own state and inputs.",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./index.js",
     "./partner": "./partner.js",
+    "./secretary": "./secretary.js",
     "./worker-discoverer": "./worker-discoverer.js",
     "./worker-implementer": "./worker-implementer.js",
     "./locale/*.json": "./locale/*.json",
@@ -16,15 +17,13 @@
   "files": [
     "index.js",
     "partner.js",
+    "secretary.js",
     "worker-discoverer.js",
     "worker-implementer.js",
     "worker-shared.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg",
-    "report-channel.js",
-    "messages.js",
-    "channel-registry.js"
+    "icon.svg"
   ],
   "dsh": {
     "bundle": {

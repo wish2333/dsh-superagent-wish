@@ -1,5 +1,5 @@
 /**
- * Manager role: registers the Partner, discoverer and implementer presets.
+ * Manager role: registers the Partner, Secretary and two Worker presets.
  *
  * Each preset's `plugins` rows name subpaths of this package (ADR-0002) plus the
  * Host tool plugins that preset may use (ADR-0003). A preset that does not list
@@ -11,18 +11,26 @@ export const inject = ['agentPresets']
 
 export const PRESETS = [
   {
-    id: 'superagent-wish-recruiter',
+    id: 'superagent-wish-partner',
     name: 'Partner',
-    description: 'Partner collaboration mode: topic anchoring, layered requirement building, dispatch by thinking mode',
+    description: 'Partner collaboration mode: talks with wish, dispatches work, keeps the working units',
     order: 10,
     subpath: 'partner',
     tools: [],
   },
   {
+    id: 'superagent-wish-secretary',
+    name: 'Secretary',
+    description: 'Judges whether an incoming file or scheduled event should become a working unit',
+    order: 20,
+    subpath: 'secretary',
+    tools: [],
+  },
+  {
     id: 'superagent-wish-discoverer',
     name: '启发者',
-    description: 'Exploration worker: read-only, reports options and blind spots back to Partner',
-    order: 20,
+    description: 'Exploration worker: writes its findings into its own directory and reports back to Partner',
+    order: 30,
     subpath: 'worker-discoverer',
     tools: [
       '@deepseek-ai/dsh-tool-fs',
@@ -35,7 +43,7 @@ export const PRESETS = [
     id: 'superagent-wish-implementer',
     name: '执行者',
     description: 'Delivery worker: produces artifacts for a task spec, reports back to Partner',
-    order: 30,
+    order: 40,
     subpath: 'worker-implementer',
     tools: [
       '@deepseek-ai/dsh-tool-fs',
