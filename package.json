@@ -16,7 +16,8 @@
     "./queue": "./queue.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./relay": "./relay.js"
   },
   "files": [
     "index.js",
@@ -27,6 +28,7 @@
     "queue.js",
     "pump.js",
     "advance.js",
+    "relay.js",
     "sessions.js",
     "partner.js",
     "secretary.js",

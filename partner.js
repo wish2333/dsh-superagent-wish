@@ -9,12 +9,12 @@
  * failing the preset.
  */
 
-import { sharedStore } from './working-units.js'
-import { sharedPolicy } from './policy.js'
 import { advance } from './advance.js'
-import { nextToStart } from './queue.js'
+import { sharedPolicy } from './policy.js'
 import { openPump, slotsFor } from './pump.js'
-import { slotsFrom } from './queue.js'
+import { nextToStart, slotsFrom } from './queue.js'
+import { turnEnded } from './relay.js'
+import { sharedStore } from './working-units.js'
 import { deliver, describe, ensureWorker, selectModel, stop, unitDirectory, WORKER_TYPES, workerSessionId } from './sessions.js'
 
 export const inject = ['systemPrompt', 'tools', 'storageDomain']
@@ -312,12 +312,14 @@ async function startNow(ctx, store, unit, { session }) {
     strength: 'explicit',
     basis: 'wish',
   })
+  // The first input reaches the Worker only after its unit exists, so a report
+  // cannot arrive before the unit it belongs to.
+  const first = created.undelivered.map((inputId) => created.inputs.find((input) => input.id === inputId)).find(Boolean)
+  if (first) await deliver(ctx, created, first, session)
+  // The first input is on its way, so the assignment it runs is running, and
+  // the report or the turn end that answers it has a round to belong to.
   const started = await store.start(created.id)
-  const first = started.undelivered.map((inputId) => started.inputs.find((input) => input.id === inputId)).find(Boolean)
-  if (first) {
-    await deliver(ctx, started, first, session)
-    await store.deliver(started.id, [first.id])
-  }
+  if (first) await store.deliver(started.id, [first.id])
   return store.get(started.id)
 }
 
@@ -360,6 +362,7 @@ export async function followup(ctx, store, policy, args, exec) {
   const updated = await store.followup(unitId, { text, source: 'wish' })
   const input = updated.inputs.at(-1)
   await deliver(ctx, updated, input, exec?.agent?.session)
+  await store.start(unitId)
   return textResult(`Sent to ${unitId}. It now holds ${updated.undelivered.length} input${updated.undelivered.length === 1 ? '' : 's'} waiting for the Worker.`, describeUnit(updated))
 }
 
@@ -429,6 +432,24 @@ export function apply(ctx, config) {
       // Worker preset all read the same rows.
       const store = () => sharedStore(storeCtx)
       const policy = () => sharedPolicy(storeCtx)
+      // A Worker runs in its preset's own scope, so only a global listener sees
+      // its status change: the listener reads the unit the Session id names,
+      // and the turn's end is what its `whenIdle` promises.
+      storeCtx.on('agent/status', async ({ agent, status }) => {
+        if (status !== 'idle') return
+        // The real Agent still finishes closing its turn when the event lands;
+        // waiting on it is what makes the turn's own report the one counted.
+        const after = () => (typeof agent?.whenIdle === 'function' ? agent.whenIdle() : undefined)
+        // Yield once first: a turn writes its report at its own end, and the
+        // event must not read the unit before that write lands.
+        try {
+          await Promise.resolve()
+          await turnEnded(workerCtx, await store(), agent?.id, after)
+        } catch {
+          // The turn end is a best effort: its failure is logged by the relay,
+          // and a status listener that threw would starve the next one.
+        }
+      }, { global: true })
       const bodies = {
         partner_dispatch: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => dispatch(workerCtx, handle, rules, slots, args, exec))),
         partner_followup: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => followup(workerCtx, handle, rules, args, exec))),

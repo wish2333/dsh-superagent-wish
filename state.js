@@ -144,6 +144,10 @@ function stop(unit, fact) {
 export function report(unit, incoming) {
   if (unit.state === 'ended') throw new WorkingUnitError('workingUnit/ended', 'The working unit has ended')
   const at = incoming.at ?? unit.updatedAt
+  const latest = unit.assignments.at(-1)
+  // A discoverer's `ready` ended the unit, and the `waiting` the executor adds
+  // when that same turn goes idle must not replace the result wish is to judge.
+  if (incoming.state === 'waiting' && latest?.report?.state === 'ready') return unit
   // A report other than `progress` ends the assignment it belongs to: the
   // worker's turn is over, so the slot it held is free. `progress` reports on a
   // turn still running and leaves the assignment as it is.
@@ -152,7 +156,7 @@ export function report(unit, incoming) {
     index === unit.assignments.length - 1
       ? {
         ...assignment,
-        report: { state: incoming.state, summary: incoming.summary, at },
+        report: { state: incoming.state, summary: incoming.summary, at, ...(incoming.source ? { source: incoming.source } : {}) },
         ...(finished ? { state: 'ended', endedAt: at, endedReason: incoming.state } : {}),
       }
       : assignment)

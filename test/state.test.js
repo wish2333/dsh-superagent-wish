@@ -150,3 +150,18 @@ test('a report after a stop does not restart the stopped assignment', () => {
   assert.equal(reported.assignments[0].state, 'ended')
   assert.equal(reported.assignments[0].report.state, 'progress')
 })
+
+test('a waiting report does not replace the ready the worker reported', () => {
+  const unit = begin(UNIT, { scope: 'src/', strength: 'explicit', policyVersion: 'policy-1', basis: 'wish' })
+  const ready = report(unit, { state: 'ready', summary: 'Delivered the storage layer' })
+  assert.equal(ready.state, 'waiting-for-decision')
+  const waited = report(ready, { state: 'waiting', summary: 'The turn ended without a report.' })
+  assert.equal(waited.assignments[0].report.state, 'ready')
+  assert.equal(waited.assignments[0].report.summary, 'Delivered the storage layer')
+})
+
+test('a report records the session that sent it', () => {
+  const unit = begin(UNIT, { scope: 'src/', strength: 'explicit', policyVersion: 'policy-1', basis: 'wish' })
+  const reported = report(unit, { state: 'blocked', summary: 'Needs the schema decided', source: 'superagent-wish-unit-1' })
+  assert.equal(reported.assignments[0].report.source, 'superagent-wish-unit-1')
+})

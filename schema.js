@@ -98,6 +98,9 @@ const reportFields = {
   state: requiredOneOf('progress', 'waiting', 'ready', 'blocked', 'failed', 'dropped'),
   summary: requiredString,
   at: requiredString,
+  // The Session that sent the report: a Worker Session, or the executor for a
+  // `waiting` it added to a turn that ended without one.
+  source: optionalString,
 }
 
 const workingUnitRecord = record({
@@ -114,6 +117,7 @@ const workingUnitRecord = record({
   // The model a dispatch named, if it named one: a queued unit selects it when
   // it starts, so the choice outlives the call that made it.
   model: optionalModel,
+  // The ids of the unit's rows; each row lives in its own table.
   inputs: stringList,
   undelivered: stringList,
   assignments: stringList,
