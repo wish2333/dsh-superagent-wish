@@ -1,5 +1,5 @@
 // Concurrency and the dispatch queue, read through the plugin entry: what the
-// Worker Sessions were handed, what the store holds, and what a tool returned.
+// Worker Sessions were handed, what the tools report, and what the Host was asked.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -9,7 +9,6 @@ import { apply as openManager } from '@wish2333/dsh-superagent-wish'
 import * as partnerModule from '@wish2333/dsh-superagent-wish/partner'
 import * as implementer from '@wish2333/dsh-superagent-wish/worker-implementer'
 import { createHost, createStorageDomain } from './host-fake.js'
-import { advance } from '../advance.js'
 
 const PARTNER = 'partner-1'
 const DISPATCH = { type: 'implementer', title: 'A job', body: 'Do the job.' }
@@ -70,9 +69,12 @@ function texts(host, sessionId) {
   return host.ctx.agents.get(sessionId)?.delivered.map((item) => item.message.content[0].text) ?? []
 }
 
-/** The record of `unitId` in the store. */
-function stored(host, unitId) {
-  return host.storageDomain.contents('working_units')[unitId]
+/** The `partner_list` record of `unitId`, as Partner reads it. */
+async function listed(host, unitId) {
+  const result = await call(host, 'partner_list', { includeEnded: true })
+  const unit = result.record.units.find((item) => item.id === unitId)
+  assert.ok(unit, `${unitId} is listed`)
+  return unit
 }
 
 test('two implementers run at once and a third waits for a slot', async () => {
@@ -87,9 +89,9 @@ test('two implementers run at once and a third waits for a slot', async () => {
     assert.deepEqual(texts(host, `superagent-wish-${first}`), ['Do the job.'])
     assert.deepEqual(texts(host, `superagent-wish-${second}`), ['Do the job.'])
     // The third unit exists, and nothing reached its worker yet.
-    assert.ok(stored(host, third))
+    assert.ok(await listed(host, third))
     assert.deepEqual(texts(host, `superagent-wish-${third}`), [])
-    assert.equal(stored(host, third).state, 'running', 'the unit is open, waiting to start')
+    assert.equal((await listed(host, third)).state, 'running', 'the unit is open, waiting to start')
   } finally {
     await host.cleanup()
   }
@@ -146,7 +148,7 @@ test('a slot frees when a worker turn ends without a report, and the queued unit
     await turn(host, 'unit-1')
     // The silent turn is the round's end: its slot is free, so the third starts.
     assert.deepEqual(texts(host, 'superagent-wish-unit-3'), ['Do the job.'])
-    assert.equal(stored(host, 'unit-1').state, 'running', 'the unit is open, still able to take input')
+    assert.equal((await listed(host, 'unit-1')).state, 'running', 'the unit is open, still able to take input')
   } finally {
     await host.cleanup()
   }
@@ -238,42 +240,25 @@ test('a wish follow-up reaches a waiting unit while both implementer slots are f
   }
 })
 
-test('the same directory never runs two implementers at once', async () => {
+test('each implementer unit opens its own directory, and only the queued one starts on a freed slot', async () => {
   const host = await plugin()
   try {
     const first = textOf(await call(host, 'partner_dispatch', { ...DISPATCH, title: 'First' }))
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Second' })
+    const third = textOf(await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Third' }))
     assert.deepEqual(texts(host, `superagent-wish-${first}`), ['Do the job.'])
 
-    // Two more units pointed at the first unit's directory, as a retry or a
-    // hand-made record can: two workers writing the same files would overwrite
-    // each other, so neither starts while the first holds the directory.
-    const { store } = await partnerModule.handles(host.ctx)
-    const shared = store.get(first).directory
-    for (const id of [store.nextId(), store.nextId()]) {
-      const next = store.nextId()
-      await store.dispatch({
-        id: next,
-        type: 'implementer',
-        title: `Shares ${id}`,
-        text: 'Write into the same directory.',
-        source: 'wish',
-        partnerSessionId: PARTNER,
-        workerSessionId: `superagent-wish-${next}`,
-        directory: shared,
-        scope: 'shared',
-        strength: 'explicit',
-        policyVersion: 'v',
-        basis: 'wish',
-      })
-      await advance(host.ctx)
-    }
-    assert.equal(host.callsTo('workspaceRegistry.create').length, 1, 'no second worker opened in that directory')
+    // Two units, two directories: no two implementers ever share one.
+    const directories = host.callsTo('workspaceRegistry.create').map((item) => item.args)
+    assert.equal(new Set(directories).size, directories.length)
+    assert.equal(directories.length, 2, 'only the two that hold a slot opened a directory')
 
-    // Once the first reports and gives the directory up, one of them starts —
-    // one, not both.
+    // Once a slot frees, exactly one queued unit starts: one more directory,
+    // for the unit the list says is queued.
     await report(host, first, 'ready')
-    const opened = host.callsTo('workspaceRegistry.create').length
-    assert.equal(opened, 2, 'exactly one of the two waiting units started')
+    const opened = host.callsTo('workspaceRegistry.create').map((item) => item.args)
+    assert.equal(opened.length, 3, 'exactly one of the waiting units started')
+    assert.ok(opened.at(-1).endsWith(third), 'the third unit started, in its own directory')
   } finally {
     await host.cleanup()
   }

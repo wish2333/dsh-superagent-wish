@@ -12,7 +12,7 @@
  */
 
 import { pushes } from './state.js'
-import { WORKER_SESSION } from './sessions.js'
+import { workerSessionId, WORKER_SESSION } from './sessions.js'
 
 /** The text of a `waiting` report for a turn that ended without one. */
 export const WAITING_SUMMARY = 'The turn ended without a report. Partner has no state for it; ask for one.'
@@ -48,6 +48,9 @@ export function reportMessage(unit, incoming, at) {
     summary: incoming.summary,
     ...(incoming.question ? { question: incoming.question } : {}),
     at,
+    // The unit's Worker Session answers for the work itself; a `waiting` the
+    // turn end adds is the executor's own reading of that turn.
+    ...(incoming.source === 'executor' ? {} : { fromSessionId: workerSessionId(unit.id) }),
   }
 }
 

@@ -93,7 +93,7 @@ export function presetRows(preset) {
  * @param ctx the plugin context, which must provide `storageDomain`
  * @returns a promise of the store, or undefined when the Host has no storage domain
  */
-export function openStore(ctx) {
+function openStore(ctx) {
   if (!ctx.storageDomain) return undefined
   // Returned rather than awaited, so `apply` stays synchronous like every other
   // insert; the opening closes its own domain when it fails.
@@ -101,6 +101,27 @@ export function openStore(ctx) {
     ctx.logger?.warn(`superagent-wish: the working unit tables did not open: ${error.message}`)
     throw error
   })
+}
+
+/**
+ * Run one judgement pass now, as the manager's loop does every period.
+ *
+ * The loop runs on its own timer; a caller that recorded events and wants them
+ * judged without waiting for the next period uses this instead.
+ *
+ * @param ctx a context that provides `storageDomain` and `sessionController`
+ * @returns the event ids this pass woke a Secretary for
+ */
+export async function judgeNow(ctx) {
+  const judge = await openJudge()
+  return judge.judge(ctx)
+}
+
+/** The judgement module, loaded on first use so the manager stays a thin registration. */
+let judgeModule
+function openJudge() {
+  judgeModule ??= import('./judge.js')
+  return judgeModule
 }
 
 /**

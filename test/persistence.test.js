@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { apply as openManager } from '@wish2333/dsh-superagent-wish'
 import { createHost, createStorageDomain } from './host-fake.js'
-import { openWorkingUnits } from '../working-units.js'
 
 // The dispatch's first input, and the authorization Partner gives it: a unit
 // is authorized for the work it was told to do, not for its title.
@@ -13,12 +13,15 @@ const DISPATCH = {
   policyVersion: 'policy-1',
 }
 
-/** Opens the store over a fresh fake medium, or over the records a previous store left. */
+/**
+ * The plugin entry over a fresh fake medium, or over the records a previous
+ * load left: the manager opens the working-unit tables, and returns the store
+ * it opened.
+ */
 async function open(medium = createStorageDomain()) {
-  const host = createHost()
-  host.ctx.storageDomain = medium.service
-  const store = await openWorkingUnits(host.ctx)
-  return { store, host, medium }
+  const host = createHost({ storageDomain: medium })
+  const { store } = openManager(host.ctx)
+  return { store: await store, host, medium }
 }
 
 /**
@@ -43,7 +46,7 @@ function start(store, fields = {}) {
 test('a working unit is read back after the plugin reloads', async () => {
   const first = await open()
   const { id } = await start(first.store)
-  await first.medium.opened.at(-1).close()
+  first.host.dispose()
 
   const second = await open(createStorageDomain(first.medium.snapshot()))
   const unit = second.store.get(id)
@@ -60,10 +63,13 @@ test('each table holds the record its relation belongs to', async () => {
   assert.deepEqual(medium.writesOf('assignments').map((write) => write.key), [`${id}/assignment-0`])
 })
 
-test('the store closes the domain it opened when the plugin unloads', async () => {
+test('the tables the plugin opens are the four of a working unit and its events, and unload releases them', async () => {
   const { host, medium } = await open()
-  assert.equal(medium.specs().length, 1)
-  assert.deepEqual(Object.keys(medium.specs()[0].tables).sort(), ['assignments', 'inputs', 'mandates', 'source_events', 'working_units'])
+  // The manager's own store, plus the policy record's domain.
+  assert.equal(medium.specs().length, 2)
+  assert.deepEqual(medium.specs().map((spec) => spec.name).sort(), ['superagent_wish_policy', 'working_units'])
+  const units = medium.specs().find((spec) => spec.name === 'working_units')
+  assert.deepEqual(Object.keys(units.tables).sort(), ['assignments', 'inputs', 'mandates', 'source_events', 'working_units'])
   host.dispose()
   assert.equal(medium.closed, true)
 })
@@ -121,7 +127,9 @@ test('an id a stored unit still holds is not issued again', async () => {
   const first = await open()
   const { id: firstId } = await start(first.store)
   const { id: secondId } = await start(first.store, { title: 'Second unit' })
-  await first.medium.opened.at(-1).table('working_units').delete(firstId)
+  // A unit deleted from the medium outside the plugin, as a hand edit would.
+  const domain = first.medium.opened.find((handle) => handle.spec.name === 'working_units')
+  await domain.table('working_units').delete(firstId)
   first.host.dispose()
 
   const second = await open(createStorageDomain(first.medium.snapshot()))

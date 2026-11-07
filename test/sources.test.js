@@ -7,13 +7,12 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply as openManager } from '@wish2333/dsh-superagent-wish'
+import { apply as openManager, judgeNow } from '@wish2333/dsh-superagent-wish'
 import * as partnerModule from '@wish2333/dsh-superagent-wish/partner'
 import * as secretary from '@wish2333/dsh-superagent-wish/secretary'
 import * as implementer from '@wish2333/dsh-superagent-wish/worker-implementer'
+import * as sourcesModule from '@wish2333/dsh-superagent-wish/sources'
 import { createHost, createStorageDomain } from './host-fake.js'
-
-const judgeSources = await import('@wish2333/dsh-superagent-wish/judge')
 
 /** A live Agent as the fake Host hands one out: its inbox records what it takes. */
 function liveAgent(id) {
@@ -28,6 +27,9 @@ function liveAgent(id) {
     cancel: () => {},
   }
 }
+
+/** How long a test waits for the manager's judgement pass, which runs on load. */
+const JUDGE_WAIT_MS = 20
 
 const PARTNER = 'partner-1'
 const SECRETARY_ID = 'partner-1-secretary'
@@ -49,6 +51,9 @@ async function plugin(options = {}) {
   const medium = options.medium ?? createStorageDomain()
   const host = createHost({ storageDomain: medium, services: SERVICES, workingDirectory: base })
   openManager(host.ctx)
+  // The five preset rows, each mounting its own module: the manager opens the
+  // tables, the file source reads them, the Secretary judges, Partner talks.
+  host.sources = { read: sourcesModule.apply(host.ctx) }
   partnerModule.apply(host.ctx)
   secretary.apply(host.ctx)
   implementer.apply(host.ctx)
@@ -78,6 +83,17 @@ async function call(host, name, args, agentId = PARTNER) {
 function textOf(result) {
   assert.deepEqual(result.content.map((block) => block.type), ['text'])
   return result.content[0].text
+}
+
+/**
+ * Reads every watched directory now, as the next poll would, through the file
+ * source the preset row mounted.
+ * @returns the events this read recorded
+ */
+async function readNow(host) {
+  const read = host.sources.read
+  assert.ok(read, 'the file source is mounted')
+  return read()
 }
 
 /** The config block the policy holds for source `id`. */
@@ -165,9 +181,7 @@ test('a settings change takes its conversation from the call, not from a session
     textOf(await call(host, 'partner_setup', {
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
-    const sources = await import('@wish2333/dsh-superagent-wish/sources')
-    sources.apply(host.ctx)
-    assert.equal((await sources.poll(host.ctx)).length, 1, 'the file source reads the new directory')
+    assert.equal((await readNow(host)).length, 1, 'the file source reads the new directory')
     const pending = Object.values(host.medium.contents('source_events')).filter((event) => event.status === 'pending')
     assert.equal(pending.length, 1)
     assert.equal(pending[0].principal, PARTNER)
@@ -276,15 +290,13 @@ test('a file put in a watched directory is recorded as an event the Secretary ju
   const host = await plugin()
   try {
     // The file source is a preset row of its own, mounted beside the others.
-    const sources = await import('@wish2333/dsh-superagent-wish/sources')
-    sources.apply(host.ctx)
     const inbox = join(host.base, 'inbox')
     textOf(await call(host, 'partner_setup', {
 
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
     const path = await put(inbox, 'note.md', '# a note')
-    const written = await sources.poll(host.ctx)
+    const written = await readNow(host)
     assert.equal(written.length, 1)
     const [event] = written
     assert.equal(event.source, 'files')
@@ -302,24 +314,20 @@ test('a file put in a watched directory is recorded as an event the Secretary ju
 test('a file already processed is not opened twice, after a restart either', async () => {
   const host = await plugin()
   try {
-    const sources = await import('@wish2333/dsh-superagent-wish/sources')
-    sources.apply(host.ctx)
     const inbox = join(host.base, 'inbox')
     textOf(await call(host, 'partner_setup', {
 
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
     await put(inbox, 'note.md', '# a note')
-    assert.equal((await sources.poll(host.ctx)).length, 1)
-    assert.equal((await sources.poll(host.ctx)).length, 0, 'the second read records nothing')
+    assert.equal((await readNow(host)).length, 1)
+    assert.equal((await readNow(host)).length, 0, 'the second read records nothing')
 
     // A restart: a second Host over the same medium, its own file source.
     const rows = Object.keys(host.medium.contents('source_events'))
     const restarted = await plugin({ base: host.base, medium: createStorageDomain(host.medium.snapshot()) })
     try {
-      const again = await import('@wish2333/dsh-superagent-wish/sources')
-      again.apply(restarted.ctx)
-      assert.equal((await again.poll(restarted.ctx)).length, 0, 'the file is known after the restart')
+      assert.equal((await readNow(restarted)).length, 0, 'the file is known after the restart')
       assert.deepEqual(Object.keys(restarted.medium.contents('source_events')), rows)
     } finally {
       await restarted.cleanup()
@@ -332,8 +340,6 @@ test('a file already processed is not opened twice, after a restart either', asy
 test('a file that changed is a new event, and one of an ignored type is recorded as dropped', async () => {
   const host = await plugin()
   try {
-    const sources = await import('@wish2333/dsh-superagent-wish/sources')
-    sources.apply(host.ctx)
     const inbox = join(host.base, 'inbox')
     textOf(await call(host, 'partner_setup', {
 
@@ -348,14 +354,14 @@ test('a file that changed is a new event, and one of an ignored type is recorded
     }))
     await put(inbox, 'note.md', '# a note')
     await put(inbox, 'draft.tmp', 'x')
-    const first = await sources.poll(host.ctx)
+    const first = await readNow(host)
     assert.deepEqual(first.map((event) => [event.kind, event.status]).sort(), [['file', 'pending'], ['ignored', 'dropped']])
     const ignored = first.find((event) => event.kind === 'ignored')
     assert.match(ignored.reason, /ignores this file type/)
 
     // The note grows: same path, new identity.
     await writeFile(join(inbox, 'note.md'), '# a note, and more')
-    const second = await sources.poll(host.ctx)
+    const second = await readNow(host)
     assert.equal(second.length, 1)
     assert.equal(second[0].ref, join(inbox, 'note.md'))
     assert.notEqual(second[0].id, first.find((event) => event.kind === 'file').id)
@@ -440,11 +446,10 @@ async function withNote(host, options = {}) {
   textOf(await call(host, 'partner_setup', {
     settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
   }))
-  const sources = await import('@wish2333/dsh-superagent-wish/sources')
-  sources.apply(host.ctx)
-  const written = await sources.poll(host.ctx)
-  const woken = await judgeSources.judge(host.ctx)
-  return { sources, written, woken, inbox, principal: host.medium.contents('policy').current.principal }
+  const written = await readNow(host)
+  // The manager hands the waiting events to the Secretary, as its loop does.
+  const woken = await judgeNow(host.ctx)
+  return { written, woken, inbox, principal: host.medium.contents('policy').current.principal }
 }
 
 test('a file event reaches the Secretary of the conversation that set the rules, with the rule text and the event', async () => {
@@ -484,26 +489,26 @@ test('an event that arrives while no conversation is open is recorded, and the n
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
     await put(inbox, 'note.md', '# a note')
-    const sources = await import('@wish2333/dsh-superagent-wish/sources')
-    sources.apply(host.ctx)
-    await sources.poll(host.ctx)
-    const woken = await judgeSources.judge(host.ctx)
-    assert.deepEqual(woken, [], 'no Secretary, so no judgement was sent')
+    await readNow(host)
+    assert.equal(host.ctx.agents.get(SECRETARY_ID), undefined, 'no Secretary, so no judgement was sent')
     const pending = Object.values(host.medium.contents('source_events')).filter((event) => event.status === 'pending')
     assert.equal(pending.length, 1, 'the event is on record with no Secretary to judge it')
 
     // The next conversation opens a Secretary, and that one is handed the waiting event.
     const next = createHost({ storageDomain: createStorageDomain(host.medium.snapshot()), services: SERVICES, workingDirectory: host.base })
-    partnerModule.apply(next.ctx)
-    secretary.apply(next.ctx)
-    const sources2 = await import('@wish2333/dsh-superagent-wish/sources')
-    sources2.apply(next.ctx)
+    // The conversation is open before the plugin loads, as a reopened Partner is.
     next.setAgent(SECRETARY_ID, liveAgent(SECRETARY_ID))
-    const seen = await judgeSources.judge(next.ctx)
-    assert.deepEqual(seen, [pending[0].id])
+    // The manager loads last: its own judgement pass runs after the Secretary
+    // exists, and hands the waiting event over.
+    openManager(next.ctx)
+    await new Promise((resolve) => setTimeout(resolve, JUDGE_WAIT_MS))
+    // Once handed over, the event is decided once: no further pass repeats it.
+    await judgeNow(next.ctx)
+    // The Secretary's inbox took one message: the waiting event, judged once.
     const agent = next.ctx.agents.get(SECRETARY_ID)
     const sent = agent.delivered.filter((item) => item.mode === 'followup')
-    assert.equal(sent.length, 1)
+    assert.equal(sent.length, 1, 'the event reached the Secretary once')
+    assert.equal(JSON.parse(sent[0].message.content[0].text).event.id, pending[0].id, 'and it is the waiting event')
     assert.equal(JSON.parse(sent[0].message.content[0].text).event.id, pending[0].id)
   } finally {
     await host.cleanup()

@@ -23,3 +23,16 @@ test('the policy and the queue are reachable as subpaths', () => {
   assert.equal(manifest.exports['./policy'], './policy.js')
   assert.equal(manifest.exports['./queue'], './queue.js')
 })
+
+// The manager opens the working-unit tables as it loads, without a caller
+// awaiting it: a Host with no storage medium still gets every preset.
+test('a Host with no storage medium still registers every preset, and opens no table', async () => {
+  const { createHost } = await import('./host-fake.js')
+  const { apply, inject, PRESETS } = await import('@wish2333/dsh-superagent-wish')
+  assert.ok(inject.includes('storageDomain'), 'the plugin asks for the storage domain where it can have one')
+  const host = createHost({ missing: ['storageDomain'] })
+  host.ctx.logger = { warn() {} }
+  apply(host.ctx)
+  assert.equal(host.callsTo('agentPresets.register').length, PRESETS.length)
+  assert.deepEqual(host.callsTo('storageDomain.open'), [])
+})

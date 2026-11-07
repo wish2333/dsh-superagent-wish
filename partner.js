@@ -74,7 +74,7 @@ export function since(iso, now) {
 }
 
 /** The list line for one unit: name, type, state and how long it has been in that state. */
-export function describeUnit(unit, now = Date.now()) {
+export function describeUnit(unit, now = Date.now(), { history = false } = {}) {
   const since_ = unit.state === 'ended' ? unit.ended?.at : unit.updatedAt
   const line = {
     id: unit.id,
@@ -82,7 +82,12 @@ export function describeUnit(unit, now = Date.now()) {
     type: unit.type,
     state: unit.state,
     since: since_ ? `${since(since_, now)} ${unit.state === 'ended' ? 'ago' : 'in this state'}` : 'unknown',
+    sinceAt: since_ ?? null,
   }
+  const notices = (unit.inputs ?? [])
+    .filter((input) => input.kind === 'policy-changed')
+    .map((input) => ({ from: input.from, to: input.to }))
+  if (history && notices.length) line.policyNotices = notices
   // What the unit may do, and what it was authorized for before an input widened it.
   line.scope = { current: unit.mandate?.scope ?? '', previous: unit.mandate?.previousScopes ?? [] }
   const report = unit.assignments.at(-1)?.report
@@ -528,7 +533,7 @@ export async function setup(ctx, store, policy, args, exec) {
     const rules = rulesOf(settings.rules)
     const { from, to, notified } = await savePolicy(policy, store, ctx, { rules }, exec?.agent?.session)
     const changed = from === to ? 'The rules are unchanged.' : `Saved ${rules.length} rule${rules.length === 1 ? '' : 's'}; the policy version is now ${to}.`
-    return textResult(`${changed} ${notified.length ? `${notified.length} open working unit(s) were told the rules changed.` : ''}`.trim(), { from, to, rules: rules.length })
+    return textResult(`${changed} ${notified.length ? `${notified.length} open working unit(s) were told the rules changed.` : ''}`.trim(), { from, to, rules: rules.length, notified })
   }
   const id = String(settings.source ?? '')
   if (!SOURCE_IDS.includes(id)) throw new Error(`unknown source ${JSON.stringify(id)}; the sources are ${SOURCE_IDS.join(' and ')}`)
@@ -577,7 +582,7 @@ export function describeDropped(event, now = Date.now()) {
 export async function listUnits(store, args) {
   const units = store.list().filter((unit) => args.includeEnded === true || unit.state !== 'ended')
   const now = Date.now()
-  const lines = units.map((unit) => describeUnit(unit, now))
+  const lines = units.map((unit) => describeUnit(unit, now, { history: true }))
   const summary = lines.length ? lines.map((line) => `${line.id} ${quoted(line.name)} — ${line.type}, ${line.state} (${line.since})${line.lastReport ? `: ${line.lastReport.state} — ${line.lastReport.summary}` : ''}`).join('\n')
     : 'No working units yet.'
   const limit = Number.isInteger(args.droppedLimit) && args.droppedLimit >= 0 ? args.droppedLimit : 20
@@ -586,23 +591,6 @@ export async function listUnits(store, args) {
     ? dropped.map((line) => `${line.at} ${line.source}: ${line.what} — dropped ${line.since}: ${line.reason}`).join('\n')
     : 'No external event was dropped.'
   return textResult(`${summary}\n\nDropped external events:\n${droppedText}`, { units: lines, dropped })
-}
-
-/**
- * The store and the policy the Partner tools read, opened on `ctx`'s medium.
- *
- * The tools open these lazily on first use; a settings path needs them before
- * any tool ran, and needs the same handles so a write is the one the tools then
- * read. A Host without a storage domain gets an error naming the missing
- * service, as a tool would.
- *
- * @param ctx the Partner context, which must provide `storageDomain`
- * @returns `{ store, policy }`
- */
-export async function handles(ctx) {
-  if (!ctx.storageDomain) throw new Error('the Host provides no storageDomain service')
-  const [store, policy] = await Promise.all([sharedStore(ctx), sharedPolicy(ctx)])
-  return { store, policy }
 }
 
 export function apply(ctx, config) {

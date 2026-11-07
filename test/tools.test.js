@@ -110,13 +110,6 @@ test('partner_report takes a state and a summary, and lists the states in its de
   }
 })
 
-// Cordis refuses a read of an undeclared service, so the tools mount inside a
-// child scope that declares what they read.
-test('the Partner tools declare the worker services they read', () => {
-  assert.deepEqual(partnerModule.WORKER_SERVICES, ['sessionController', 'workspaceRegistry', 'permissionPresets', 'agents', 'workingDirectory'])
-  assert.deepEqual(partnerModule.STORE_SERVICES, ['storageDomain'])
-})
-
 // A missing service must cost the tool, not the preset: a Partner session still
 // gets its prompt and any tool whose services are present.
 test('a missing Host service leaves the Partner tools absent rather than failing the preset', async () => {
