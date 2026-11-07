@@ -79,7 +79,7 @@
 
 **当前状态**：规格已定。见 `./composition-spec.md`（规格说明）和 `./composition.yaml`（机器可读配置）。
 
-Worker 类型：启发者（discoverer）、执行者（implementer）。两类 Worker 的差别全部落在 preset 的工具白名单上，见上述文件。`../impl/plugin-manifest.md` 列出本插件用到的 DSH Host 服务。
+Worker 类型：启发者（discoverer）、执行者（implementer）。两类 Worker 的差别落在 preset 的工具白名单和结束条件上，见上述文件。`../impl/plugin-manifest.md` 列出本插件用到的 DSH Host 服务。
 
 ---
 
@@ -90,15 +90,15 @@ Worker 类型：启发者（discoverer）、执行者（implementer）。两类 
 **职责**：接收来自人或事件的输入，决定派给谁、怎么派，把结果带回给人。
 
 **当前实现**：DeepSeek Harness 插件（本仓库）。
-- 任务入口：你的消息
-- 分派：`ctx.sessionController.create({ agentPreset })`，每个 Worker 一个独立会话和工作目录（R28）
+- 任务入口：你的消息；外部事件（文件、定时）由 Secretary 判断后进入
+- 分派：`ctx.sessionController.create({ agentPreset })`，每个工作单元一个独立会话和工作目录（R28）
 - 派发前由 Partner 暂停等确认；DSH 无强制机制
 - 已知限制：无 Watchdog，Worker 卡住时靠自报
+- 重写方案见 `../design/working-unit.md`
 
 **当前状态**：协作模式规格见 `./interaction-spec.md`；派发技术方案见 `../impl/superagent-impl.md`。
 
 **待设计**：
-- 文件入口的巡查周期和文件夹名单（依赖 cron，后续接入）。
 - 记忆层的跨会话延续。
 - Watchdog 的实现方式。
 

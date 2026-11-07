@@ -1,6 +1,6 @@
 # dsh-superagent-wish
 
-A DeepSeek Harness bundle that adds **Partner**, a super-agent preset for a personal AI workflow.
+A DeepSeek Harness bundle that adds **Partner**, a super-agent preset for a personal AI workflow. Partner talks to wish and dispatches work; each piece of work is a **working unit** that keeps its own state, inputs and worker, so wish can keep talking to it instead of starting over.
 
 When the Partner preset is selected in a session, the agent receives the collaboration protocol as part of its system prompt:
 
@@ -11,10 +11,13 @@ When the Partner preset is selected in a session, the agent receives the collabo
 - **Worker dispatch by thinking mode** — divergent exploration goes to a discoverer, a confirmed direction goes to an implementer. Each Worker is a separate DSH session with its own preset and working directory.
 - **Sparse interruption** — only during execution. Deep discussion happens at other times.
 
+A **Secretary** session is created alongside each new Partner session. It judges whether an incoming file or scheduled event should become a working unit, and speaks only when wish must decide something.
+
 ## Requirements
 
 - DeepSeek Harness with the `agentPresets`, `systemPrompt` and `tools` Host services.
-- For Worker dispatch: the `sessionController`, `workspaceRegistry`, `permissionPresets`, and `agents` Host services. A Worker is a separate DSH session, not a subagent (R28).
+- For dispatch: the `sessionController`, `workspaceRegistry`, `permissionPresets`, `agents` and `workingDirectory` Host services. A Worker is a separate DSH session, not a subagent (R28).
+- For the Secretary: an event-source configuration block and the `agent/created` event.
 
 ## Installation
 
@@ -26,15 +29,15 @@ dsh plugin --profile desktop add "link:$PWD"
 
 Or install with `plugin_manager install_bundle` from inside a DSH session, pointing at the cloned directory.
 
-After installation, select the **Partner** preset when starting a new session.
+After installation, select the **Partner** preset when starting a new session. The Worker and Secretary presets are not meant to be selected by hand.
 
 ## Repository layout
 
 ```
 .
-├── index.js                    Manager: registers the three presets
+├── index.js                    Manager: registers the four presets
 ├── partner.js                  Partner preset: collaboration prompt + partner_dispatch
-├── worker-discoverer.js        启发者 preset: read-only whitelist + partner_report
+├── worker-discoverer.js        启发者 preset: writes inside its own directory + partner_report
 ├── worker-implementer.js       执行者 preset: write tools + partner_report
 ├── worker-shared.js            Prompt rules both worker roles share
 ├── tools.js                    Tool definitions and worker-kind to preset map
@@ -48,6 +51,9 @@ After installation, select the **Partner** preset when starting a new session.
 ├── icon.svg                    Hub-and-spoke icon representing worker coordination
 ├── docs/
 │   ├── REQUIREMENTS.md         Numbered requirement list
+│   ├── PROJECT-NEEDS.md        What the plugin is for, requirement by requirement
+│   ├── design/
+│   │   └── working-unit.md     The rewrite: roles, working-unit shape, tool surface
 │   ├── adr/                    Decision records
 │   ├── spec/
 │   │   ├── framework.md        Four-layer framework
@@ -64,13 +70,16 @@ After installation, select the **Partner** preset when starting a new session.
 
 ## Status
 
-All three presets are registered and load without a diagnostic; each is mounted from its own submodule (ADR-0002) with its tool plugins listed as preset rows (ADR-0003). A dispatch creates a worker session and delivers its first message; two real dispatches have run end to end.
+Three presets are registered and load without a diagnostic; each is mounted from its own submodule (ADR-0002) with its tool plugins listed as preset rows (ADR-0003). A dispatch creates a worker session and delivers its first message; two real dispatches have run end to end.
 
-Known gaps:
+The plugin is not in use yet. A rewrite is planned that turns a dispatch into a **working unit** and adds the Secretary: `docs/design/working-unit.md`.
 
-- `partner_followup` is documented but not implemented, so a worker currently gets one message. See `docs/impl/superagent-impl.md` §3b.
+Current gaps:
+
+- There is no working unit, so a worker gets one message and nothing can be added to it afterwards. `partner_followup`, `partner_stop` and `partner_list` do not exist.
 - Reports are relayed with a `user` source, so they read as wish's own words. They should carry `agent-message`.
-- No input queue, claim, or mandate: one Partner names one worker. The cost table is in `docs/impl/superagent-impl.md` §6.
+- `partner_dispatch` returns a session id rather than a working-unit id.
+- The preset ids still say `superagent-wish-recruiter` for Partner; the rewrite renames it to `superagent-wish-partner`.
 
 `npm test` covers the Host boundary, the dispatch chain, and the relay.
 

@@ -25,8 +25,8 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 | preset id | `superagent-wish-discoverer` |
 | 用途 | 探索选项、发散思路、挑战假设 |
 | 输入 | exploratory prompt（开放式） |
-| 输出 | 想法、选项、分析 |
-| 副作用约束 | 不给写入工具，不能产生持久副作用 |
+| 输出 | 写入自己工作目录的产出文件，含想法、选项、分析 |
+| 副作用约束 | 写入只落在自己的工作目录，不改仓库 |
 
 ### 执行者（implementer）
 
@@ -50,13 +50,15 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 | `grep` | 有 | 有 |
 | `web_search` | 有 | 有 |
 | `web_fetch` | 有 | 有 |
-| `write` | 无 | 有 |
-| `edit` | 无 | 有 |
+| `write` | 有 | 有 |
+| `edit` | 有 | 有 |
 | `bash` | 无 | 有 |
 | `todo_write` | 有 | 有 |
 | `partner_report` | 有 | 有 |
 
-启发者不写文件，靠 preset 挂载的 `plugins` 行保证：preset 不列 `@deepseek-ai/dsh-tool-bash` 就没有 shell，不列 `dsh-tool-fs` 就没有写入。不用 `ctx.tools.restrict()`——它只对已注册的全局工具做减法，preset 加载时那些工具还没注册（ADR-0003）。执行者的写权限边界也是这组 `plugins` 行，不是目录限制（ADR-0001）。
+启发者不跑命令：preset 不列 `@deepseek-ai/dsh-tool-bash` 就没有 shell。写权限靠这组 `plugins` 行给，范围的约束靠 task 说明，无运行时拦截（ADR-0001）。不用 `ctx.tools.restrict()`——它只对已注册的全局工具做减法，preset 加载时那些工具还没注册（ADR-0003）。
+
+两类 Worker 的结束条件不同：启发者报 `ready` 即结束，追问开新的工作单元；执行者报 `ready` 后等 wish 判断，追问投给同一个工作单元。见 `../design/working-unit.md` 第二节。
 
 ---
 
@@ -64,13 +66,14 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 
 | 项目 | 方式 |
 |---|---|
-| preset 注册 | 原型用 YAML 声明 `@deepseek-ai/dsh-agent-preset`；加载失败时退回 `ctx.agentPresets.register({ id, name, description, order, plugins })` |
+| preset 注册 | 用 `ctx.agentPresets.register({ id, name, description, order, plugins })` |
 | Worker 会话创建 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` |
 | 工作目录 | `ctx.workspaceRegistry.create(cwd)` |
 | 权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` |
 | 送任务 | `agent.followup(message)`；改当前轮用 `agent.steer(message)` |
 | 回报回传 | 队列 → `agent.steer(report)` 送进 Partner；一轮结束无回报时补一条 `waiting` |
 | 派发入口 | Partner preset 的 `partner_dispatch` 工具；Worker preset 无此工具 |
+| 追加与中止 | `partner_followup` 投给工作单元当前的 Worker 会话；`partner_stop` 中止当前一轮 |
 | 模型 | 不指定，用会话默认 |
 
 ---

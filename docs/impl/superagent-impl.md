@@ -1,21 +1,23 @@
 # SuperAgent 层实现方案
 
 本文件描述 SuperAgent 层在 DeepSeek Harness（DSH）上的派发技术方案。
+重写后的结构见 `../design/working-unit.md`；本文第二节的派发链路是当前代码，第六节之后的模型按设计文档重写。
 行为规格见 `../spec/interaction-spec.md`，Worker 类型与工具见 `../spec/composition-spec.md`，派发操作见 `../guides/dispatch-guide.md`。
 
 ---
 
 ## 一、定位
 
-SuperAgent 层就是 Partner（主 Agent）。它和 Worker 都是 DSH 会话，差别在 preset：
+SuperAgent 层就是 Partner。Partner、Secretary 和 Worker 都是 DSH 会话，差别在 preset：
 
 | 角色 | preset | 说明 |
 |---|---|---|
-| Partner | `superagent-wish-recruiter` | 本插件注册。只做对话和派发，不执行 |
-| 启发者 | `superagent-wish-discoverer` | 本插件注册。发散探索，不给写入工具 |
+| Partner | `superagent-wish-partner` | 本插件注册。只做对话和派发，不执行 |
+| Secretary | `superagent-wish-secretary` | 本插件注册。判断外部事件要不要开成工作单元 |
+| 启发者 | `superagent-wish-discoverer` | 本插件注册。发散探索，产出写成文件 |
 | 执行者 | `superagent-wish-implementer` | 本插件注册。按 task spec 产出交付物 |
 
-Partner 在会话启动时选中；Worker 会话由 Partner 派发时创建，不供手动选择。
+Partner 在会话启动时选中；Secretary 随 Partner 新会话创建；Worker 会话由 Partner 派发时创建。三个角色都不供手动选择。
 
 Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，Partner 不用子代理派活。
 
@@ -46,7 +48,7 @@ Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，
 
 **派发入口**：Partner preset 带 `partner_dispatch` 工具（参数：Worker 类型、目标、task spec 或 exploratory prompt），工具实现内部跑上表 0–6 步。两个 Worker preset 只带 `partner_report`，不带 `partner_dispatch`。
 
-**回报兜底**：监听 `agent/status`，Worker 转 `idle` 且上一轮没有 `partner_report`（或只有 `progress`）时，补一条 `waiting` 回报给 Partner，对齐原型 `src/executor/dsh.ts:657-669`。
+**回报兜底**：监听 `agent/status`，Worker 转 `idle` 且上一轮没有 `partner_report`（或只有 `progress`）时，补一条 `waiting` 回报给 Partner，与原型 `src/executor/dsh.ts:657-669` 同法。
 
 监听必须带 `{ global: true }`：Worker 跑在自己的 preset 作用域里，作用域内监听收不到它的状态事件，兜底就永远不触发。
 
@@ -75,7 +77,7 @@ export const inject = ['systemPrompt', 'tools', 'agents']
 
 | 项 | 启发者 | 执行者 |
 |---|---|---|
-| 写入工具（`write` / `edit`） | 不给 | 给 |
+| 写入工具（`write` / `edit`） | 给（产出写成文件） | 给 |
 | `bash` | 不给 | 给 |
 | 只读工具（`read` / `glob` / `grep` / `web_search` / `web_fetch`） | 给 | 给 |
 | 挂载的工具插件 | `dsh-tool-fs`、`dsh-tool-fs-search`、`dsh-tool-web`、`dsh-tool-todo` | 同上，加 `dsh-tool-bash` |
@@ -83,34 +85,37 @@ export const inject = ['systemPrompt', 'tools', 'agents']
 | `partner_followup` | 无（由 Partner 调用） | 无（由 Partner 调用） |
 | 回报方式 | 会话结束时把结论带回 Partner | 会话结束时把交付物和偏差带回 Partner |
 
-启发者不能写文件，靠 preset 挂载哪些工具插件保证，不靠提示词，也不靠 `ctx.tools.restrict()`——后者只对已注册的全局工具做减法，preset 加载时那些工具还没注册（ADR-0003）。
+启发者的写权限只落在自己的工作目录内，靠 task 说明约束，无运行时拦截。工具白名单靠 preset 挂载哪些 `plugins` 行保证，不靠 `ctx.tools.restrict()`——后者只对已注册的全局工具做减法，preset 加载时那些工具还没注册（ADR-0003）。
 
 ---
 
-## 三之二、Worker 会话的生命周期
+## 三之二、工作单元的生命周期
 
-Worker 会话不是一次性的：伙伴和 Worker 可以来回多轮。生命周期是
+一个工作单元是一件事，不是一次会话。它有自己的身份、状态和输入队列；Worker 会话只是它在一个时段的执行者。结构见 `../design/working-unit.md` 第二、三节。
 
 ```
-派发（建会话 + 送第一条任务）
+开一个工作单元（Partner 决定，或 Secretary 按规则判断）
+  → 建工作目录、起 Worker 会话、投第一条输入
   → Worker 执行、回报
-  → （可选）追加消息，Worker 继续
+  → 追加输入（可选），投给当前 Worker 会话
   → 回报
   → 结束
 ```
 
-**两种消息，两个工具**：
+**工具**：
 
-| 工具 | 挂在哪个 preset | 作用 |
-|---|---|---|
-| `partner_dispatch` | 只有 Partner | 建 Worker 会话，并送出第一条 task spec 或 exploratory prompt |
-| `partner_followup` | 只有 Partner | 向已存在的 Worker 会话送一条追加消息，不新建会话 |
+| 工具 | 挂在哪个 preset | 作用 | 状态 |
+|---|---|---|---|
+| `partner_dispatch` | 只有 Partner | 起一个工作单元，返回工作单元 id | 已实现，返回的是 `sessionId`，重写后改为工作单元 id |
+| `partner_followup` | 只有 Partner | 向一个工作单元追加输入，投给当前的 Worker 会话 | 未实现 |
+| `partner_stop` | 只有 Partner | 中止当前这一轮；工作单元仍在，之后可以追问 | 未实现 |
+| `partner_list` | 只有 Partner | 查工作单元的状态和被判掉的外部事件 | 未实现 |
 
-追加消息用 `followup` 投递：Worker 空闲时开新一轮，运行中进入下一轮。Partner 要自己记住 Worker 的 `sessionId`，派发结果里会返回它。
+附录入按工作单元的队列投递：Worker 空闲时开新一轮，运行中排到下一轮。Partner 按工作单元 id 引用，不记 Worker 会话 id。
 
-**为什么不是 Ticket 体系**：原型用一个输入队列加认领机制管理多任务和授权，那是 `Ticket` / `Input` / `Assignment` 三套状态机（`src/core/engine.ts`、`src/executor/dsh.ts`）。本插件目前只有「Partner 指名某个 Worker」这一种追加方式：不排队、不认领、不拦截越界，越界判断靠 Worker 自报和 Partner 核查。多任务并行、输入排队、外部事件进来这三件事没有覆盖。
+**现状**：只有 `partner_dispatch` 已实现。Worker 目前只收到一条消息，追加、中止、查询都没有。
 
-这是本轮范围的取舍，不是永久决定。要补的时候，第一件事就是这套输入队列。
+**多任务体系**：Ticket / Input / Assignment / Mandate 这一档已经确定要做，方案见 `../design/working-unit.md`。这些模型不属于团队场景：个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
 
 ---
 
@@ -126,11 +131,11 @@ Partner 在调用 `partner_dispatch` 之前自行暂停，等你确认。DSH 没
 
 Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，不直接透传。
 
-**回报不是用户说的话。** 它带着 Worker 会话 id、任务标题和状态，Partner 应当把它读成「某个 Worker 报了什么」，而不是「wish 说了什么」。实现上回报是一条 source 为 `agent-message` 的消息，不伪装成用户输入；正文格式见 `../guides/dispatch-guide.md` 第六节。
+**回报不是用户说的话。** 它带着 Worker 会话 id、任务标题和状态，Partner 应当把它读成“某个 Worker 报了什么”，而不是“wish 说了什么”。实现上回报是一条 source 为 `agent-message` 的消息，不伪装成用户输入；正文格式见 `../guides/dispatch-guide.md` 第六节。
 
 | Worker 类型 | Partner 的处理 |
 |---|---|
-| 启发者 | 提炼选项和盲点，并入当前需求模型，标「推断」或「启发者建议」 |
+| 启发者 | 提炼选项和盲点，读它写下的产出文件，并入当前需求模型，标“推断”或“启发者建议” |
 | 执行者 | 核查交付物是否符合 task spec；有偏差按原因＋影响＋选项汇报 |
 
 回报用 `partner_report` 提交，状态取 `progress` / `ready` / `blocked` / `failed` / `waiting` 之一，附摘要。`progress` 只在你要求时带回；其余四种一律带回。
@@ -139,31 +144,30 @@ Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，�
 
 ## 六、与 dsh-superagent 原型的关系
 
-本插件复用原型的派发方式，不复制原型的领域模型。
+本插件复用原型的派发方式、四张表的领域模型和事件源那一层；判断位置按本插件的需要重新安排。
 
 | 原型有 | 本插件 |
 |---|---|
-| Source / Thread / Eval / Decision | 本轮不做。触发只有你的消息 |
-| Ticket / Mandate / Assignment / Subscription | 本轮不做，见下方「取舍的代价」 |
-| `orchestrator_*` 领域工具 | 不做。换成 `partner_dispatch` 和 `partner_report` 两个工具，见 ADR-0001 |
+| Source / Thread / Eval / Decision | 做。外部事件由 Secretary 判断，进入方式见 `../design/working-unit.md` 第五节 |
+| Ticket / Mandate / Assignment / Subscription | 做，对应工作单元、输入、派工、授权四张表。订阅简化为“工作单元挂在哪条对话上” |
+| `orchestrator_*` 领域工具 | 换成 `partner_*` 工具，名字和参数按个人对话重定 |
 | 会话创建、工具白名单、消息投递 | 复用同一组 DSH Host 服务 |
-| 两个 preset（router / worker） | 三个 preset（`superagent-wish-recruiter` / `superagent-wish-discoverer` / `superagent-wish-implementer`） |
+| 两个 preset（router / worker） | 四个 preset（`superagent-wish-partner` / `superagent-wish-secretary` / `superagent-wish-discoverer` / `superagent-wish-implementer`） |
 | 回报以 `steer` 送进主 Session，无报告时补 `waiting` | 同法复用 |
 
-原型的领域模型服务于团队事件流，本插件服务于个人对话，两者不合并。
+原型的 Ticket / Input / Assignment / Mandate 不是团队专用。个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
 
-### 取舍的代价
+与原型的分工差异：原型里主 Session 只做路由，判断分散在策略规则和 Worker 上；本插件的 Partner 承担对话里的判断（值不值得开活、派给谁、此刻要不要对你说），机制部分仍在代码里。差异的理由见 `../design/working-unit.md` 第三节。
 
-不采用 Ticket 不是「不需要」，是本轮不建。代价要写清楚：
+### 现在缺什么
 
-| 不做的东西 | 现在缺什么 | 现状怎么补 |
-|---|---|---|
-| `Input` 队列 | 追加消息要由 Partner 指名 Worker；没有排队、没有顺序保证 | `partner_followup` 直接投递 |
-| `Assignment` 认领 | 同一 Worker 不能同时接两件事；并发无上限也无隔离 | Partner 自己控制派发节奏 |
-| `Mandate` 授权 | 越界判断只靠 Worker 自报和 Partner 核查，无运行时拦截 | task spec 的 `scope.out` 加 Partner 复核 |
-| 外部事件入口 | 任务只能从 wish 的消息开始 | 本轮无 |
-
-补这套东西是一次重构，不是加一个特性：要引入三条状态、一次投递队列和越界拦截。它的收益在多任务并行、需要授权边界、或要让外部事件进来的时候才出现。
+| 缺的东西 | 现在的结果 |
+|---|---|
+| 工作单元 | 没有这个对象，派发结果里只有一个 `sessionId` |
+| 输入队列 | Worker 只收一条消息；追加消息要重派一个 Worker |
+| 派工记录 | 叫停、重试、恢复都没有落点 |
+| 授权 | 越界判断只靠 Worker 自报和 Partner 核查，无运行时拦截 |
+| `partner_followup`、`partner_stop`、`partner_list` | 文档描述了前两个，代码里一个都没有 |
 
 ---
 

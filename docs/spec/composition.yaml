@@ -9,7 +9,7 @@ workers:
   discoverer:
     label: 启发者
     preset_id: superagent-wish-discoverer
-    purpose: 探索性任务，不产生持久副作用
+    purpose: 探索性任务，产出写成文件，不改仓库
     input: exploratory_prompt
     output: ideas_and_options
     tools:
@@ -18,6 +18,8 @@ workers:
       - grep
       - web_search
       - web_fetch
+      - write
+      - edit
       - todo_write
       - partner_report
 
@@ -50,3 +52,5 @@ runtime_binding:
     report_relay: agent.steer
     permission_mode: danger-full-access
     model: default
+    followup: partner_followup
+    stop: partner_stop

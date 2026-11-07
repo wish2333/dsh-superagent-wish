@@ -4,7 +4,7 @@
 
 | 服务 | 用途 | 状态 |
 |---|---|---|
-| `agentPresets` | 注册 Partner、启发者、执行者三个 preset | 已验证（`register(definition)`） |
+| `agentPresets` | 注册 Partner、Secretary、启发者、执行者四个 preset | 已验证（`register(definition)`） |
 | `systemPrompt` | 向 Partner 注入协作模式行为规则 | 已验证（`section({ name, order, text })`） |
 | `workspaceRegistry` | 给每个 Worker 建独立工作目录 | 已验证（`create(cwd)`） |
 | `sessionController` | 起 Worker 会话、取名、取回会话 | 已验证（`create` / `rename` / `resolveAgent`） |
@@ -13,7 +13,8 @@
 
 验证依据：`/Applications/DeepSeek Harness.app/Contents/Resources/app.asar` 的类型声明。
 
-当前实现只用到前两项。后四项在派发链路实现时才接入，技术方案见 `../impl/superagent-impl.md`。
+当前实现只用到前两项。其余四项在派发链路实现时接入，技术方案见 `superagent-impl.md`。
+Secretary 另需 `agent/created` 事件（判断是否 Partner 的新会话）。
 
 ---
 
