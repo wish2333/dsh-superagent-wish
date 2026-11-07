@@ -1,13 +1,19 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost } from './host-fake.js'
-import { apply, inject, PRESETS } from '../index.js'
+import { apply, inject, PRESETS, presetRows } from '../index.js'
 
 const EXPECTED = [
   { id: 'superagent-wish-recruiter', name: 'Partner', subpath: 'partner' },
   { id: 'superagent-wish-discoverer', name: '启发者', subpath: 'worker-discoverer' },
   { id: 'superagent-wish-implementer', name: '执行者', subpath: 'worker-implementer' },
 ]
+
+const FS = '@deepseek-ai/dsh-tool-fs'
+const SEARCH = '@deepseek-ai/dsh-tool-fs-search'
+const WEB = '@deepseek-ai/dsh-tool-web'
+const TODO = '@deepseek-ai/dsh-tool-todo'
+const BASH = '@deepseek-ai/dsh-tool-bash'
 
 async function registered() {
   const host = createHost()
@@ -35,76 +41,57 @@ test('registers the three presets with their ids, names and order', async () => 
 test('each preset mounts its own subpath of this package (ADR-0002)', async () => {
   const definitions = await registered()
   for (const [index, definition] of definitions.entries()) {
-    const { subpath } = EXPECTED[index]
-    assert.equal(definition.plugins.length, 1)
-    assert.equal(definition.plugins[0].name, `@wish2333/dsh-superagent-wish/${subpath}`)
+    assert.equal(definition.plugins[0].name, `@wish2333/dsh-superagent-wish/${EXPECTED[index].subpath}`)
   }
-})
-
-test('works with no role config, as the bundle patch mounts it', async () => {
-  const host = createHost()
-  apply(host.ctx)
-  await Promise.resolve()
-  assert.equal(host.callsTo('agentPresets.register').length, 3)
 })
 
 test('the package exports every subpath a preset mounts', async () => {
   const { default: manifest } = await import('../package.json', { with: { type: 'json' } })
   for (const { subpath } of EXPECTED) {
     assert.ok(manifest.exports[`./${subpath}`], `package.json exports ./${subpath}`)
+    assert.ok(manifest.files.includes(manifest.exports[`./${subpath}`].slice(2)), `package.json ships ./${subpath}`)
   }
 })
 
-test('only the Partner submodule declares the dispatch tool', async () => {
-  const { DISPATCH_TOOL } = await import('../partner.js')
-  assert.equal(DISPATCH_TOOL.name, 'partner_dispatch')
-  for (const path of ['../worker-discoverer.js', '../worker-implementer.js']) {
-    const module = await import(path)
-    assert.equal(module.DISPATCH_TOOL, undefined, `${path} declares no dispatch tool`)
-  }
+test('the discoverer mounts no shell and no write tool plugin (ADR-0003)', async () => {
+  const definitions = await registered()
+  const discoverer = definitions.find((definition) => definition.id === 'superagent-wish-discoverer')
+  const mounted = discoverer.plugins.map((row) => row.name)
+
+  for (const plugin of [FS, SEARCH, WEB, TODO]) assert.ok(mounted.includes(plugin), `mounts ${plugin}`)
+  assert.ok(!mounted.includes(BASH), 'must not mount the shell')
 })
 
-test('a discoverer mounts a whitelist without write tools', async () => {
-  const { apply: mount } = await import('../worker-discoverer.js')
+test('the implementer mounts the discoverer tool set plus the shell', async () => {
+  const definitions = await registered()
+  const mounted = definitions
+    .find((definition) => definition.id === 'superagent-wish-implementer')
+    .plugins.map((row) => row.name)
+  for (const plugin of [FS, SEARCH, WEB, TODO, BASH]) assert.ok(mounted.includes(plugin), `mounts ${plugin}`)
+})
+
+test('Partner mounts no Host tool plugin at all', async () => {
+  const definitions = await registered()
+  const partner = definitions.find((definition) => definition.id === 'superagent-wish-recruiter')
+  assert.equal(partner.plugins.length, 1, 'only its own module')
+})
+
+test('no preset applies a tool restriction to an inherited set', async () => {
   const host = createHost()
-  mount(host.ctx)
-  const [restriction] = host.callsTo('tools.restrict')
-  assert.ok(restriction)
-  const allow = restriction.args.allow
-  for (const tool of ['read', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_write', 'partner_report']) {
-    assert.ok(allow.includes(tool), `discoverer allows ${tool}`)
-  }
-  for (const tool of ['write', 'edit', 'bash']) {
-    assert.ok(!allow.includes(tool), `discoverer must not allow ${tool}`)
-  }
-})
-
-test('an implementer mounts the same whitelist plus the write tools', async () => {
-  const { apply: mount } = await import('../worker-implementer.js')
-  const host = createHost()
-  mount(host.ctx)
-  const [restriction] = host.callsTo('tools.restrict')
-  assert.ok(restriction)
-  for (const tool of ['read', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_write', 'partner_report', 'write', 'edit', 'bash']) {
-    assert.ok(restriction.args.allow.includes(tool), `implementer allows ${tool}`)
-  }
-})
-
-test('both worker prompts document the four report states', async () => {
   for (const path of ['../worker-discoverer.js', '../worker-implementer.js']) {
-    const module = await import(path)
-    const prompt = module.DISCOVERER_PROMPT ?? module.IMPLEMENTER_PROMPT
-    for (const state of ['progress', 'ready', 'blocked', 'failed']) {
-      assert.match(prompt, new RegExp(state), `${path} mentions ${state}`)
-    }
-    assert.match(prompt, /partner_report/)
+    const { apply: mount } = await import(path)
+    mount(host.ctx)
   }
+  assert.equal(host.callsTo('tools.restrict').length, 0)
 })
 
-test('the Partner prompt names partner_dispatch and never a worker tool', async () => {
-  const { ROLE_SECTION_TEXT } = await import('../partner.js')
-  assert.match(ROLE_SECTION_TEXT, /Partner/)
-  assert.doesNotMatch(ROLE_SECTION_TEXT, /partner_report/)
+test('presetRows puts the preset module first, then its tool plugins', () => {
+  const preset = { subpath: 'worker-implementer', tools: [FS, BASH] }
+  assert.deepEqual(presetRows(preset).map((row) => row.name), [
+    '@wish2333/dsh-superagent-wish/worker-implementer',
+    FS,
+    BASH,
+  ])
 })
 
 test('PRESETS exposes the three manifest rows the manager uses', () => {

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost } from './host-fake.js'
-import { apply as mountPartner, dispatch } from '../partner.js'
+import { apply as mountPartner, dispatch, reportChannels } from '../partner.js'
 import { report } from '../report.js'
 
 /** A Partner context and one dispatched worker session, wired through the real channel. */
@@ -27,14 +27,16 @@ async function dispatchedWorker() {
 
   mountPartner(host.ctx)
   const registration = host.callsTo('tools.register')[0].args
-  const result = await registration.options.execute({ kind: 'discoverer', title: 'Explore options', body: '背景：...' })
+  const result = await registration.options.execute({ kind: 'discoverer', title: 'Explore options', body: '背景：...' }, { agent: { id: 'partner-session' } })
   assert.equal(result.isError, undefined)
 
   const workerSessionId = host.callsTo('sessionController.create')[0].args.sessionId
+  // The channel is closed over by the Partner preset; the worker test reaches it
+  // through the dispatch tool's report channel, which it shares by construction.
   const workerCtx = {
     session: { id: workerSessionId },
     agents: { get: () => ({ session: {} }), turnBoundaryOf: () => ({ lastTurn: 1 }) },
-    reportChannel: host.ctx.reportChannel,
+    reportChannel: reportChannels.get(host.ctx),
   }
   return { host, steered, workerSessionId, workerCtx }
 }

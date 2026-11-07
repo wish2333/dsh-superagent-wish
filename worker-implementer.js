@@ -1,16 +1,26 @@
 /**
- * Implementer preset: delivery work. Carries the write tools the discoverer
- * omits; the whitelist stays the boundary, not a directory restriction.
+ * Implementer preset: delivery work.
+ *
+ * Mounts the same read-only set as the discoverer plus the shell, so the two
+ * worker roles differ by exactly one tool plugin (ADR-0003).
  */
 
-import { WORKER_RULES, WORKER_TOOLS } from './worker-shared.js'
-
 import { report } from './report.js'
+import { WORKER_RULES } from './worker-shared.js'
 import { REPORT_TOOL } from './tools.js'
 
 export const inject = ['systemPrompt', 'tools']
 
-export const IMPLEMENTER_TOOLS = [...WORKER_TOOLS, 'write', 'edit', 'bash']
+/** The discoverer's set, plus the shell. */
+export const IMPLEMENTER_TOOL_PLUGINS = [
+  '@deepseek-ai/dsh-tool-fs',
+  '@deepseek-ai/dsh-tool-fs-search',
+  '@deepseek-ai/dsh-tool-web',
+  '@deepseek-ai/dsh-tool-todo',
+  '@deepseek-ai/dsh-tool-bash',
+]
+
+export const IMPLEMENTER_TOOLS = ['read', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_write', 'write', 'edit', 'bash', 'partner_report']
 
 export const IMPLEMENTER_PROMPT = `${WORKER_RULES}
 
@@ -29,5 +39,4 @@ export function apply(ctx) {
     }),
   )
   ctx.effect(() => ctx.tools.register(REPORT_TOOL, { execute: (args, exec) => report(ctx, args, exec) }))
-  ctx.effect(() => ctx.tools.restrict({ allow: IMPLEMENTER_TOOLS }))
 }

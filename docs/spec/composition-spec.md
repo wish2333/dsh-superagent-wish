@@ -43,6 +43,7 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 ## 三、工具边界
 
 | 工具 | 启发者 | 执行者 |
+| 来源插件 | 见 ADR-0003 | 见 ADR-0003 |
 |---|---|---|
 | `read` | 有 | 有 |
 | `glob` | 有 | 有 |
@@ -55,7 +56,7 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 | `todo_write` | 有 | 有 |
 | `partner_report` | 有 | 有 |
 
-启发者不写文件，靠 preset 的工具白名单保证，不靠提示词。执行者的写权限边界也是这张白名单，不是目录限制（ADR-0001）。
+启发者不写文件，靠 preset 挂载的 `plugins` 行保证：preset 不列 `@deepseek-ai/dsh-tool-bash` 就没有 shell，不列 `dsh-tool-fs` 就没有写入。不用 `ctx.tools.restrict()`——它只对已注册的全局工具做减法，preset 加载时那些工具还没注册（ADR-0003）。执行者的写权限边界也是这组 `plugins` 行，不是目录限制（ADR-0001）。
 
 ---
 

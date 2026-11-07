@@ -18,6 +18,17 @@ export const WORKER_KINDS = {
   implementer: 'superagent-wish-implementer',
 }
 
+/**
+ * Renders a tool result as the content blocks DSH requires. DSH rejects a tool
+ * definition without an `output` block, so every tool here declares one.
+ */
+function renderText(args, value) {
+  const text = value && Array.isArray(value.content)
+    ? value.content.map((block) => block.text ?? '').join('\n')
+    : String(value)
+  return [{ type: 'text', text }]
+}
+
 export const DISPATCH_TOOL = {
   name: DISPATCH_TOOL_NAME,
   description:
@@ -41,6 +52,7 @@ export const DISPATCH_TOOL = {
       description: 'The exploratory prompt or task spec, already formatted as text.',
     },
   },
+  output: { schema: { type: 'object' }, render: renderText },
 }
 
 export const REPORT_TOOL = {
@@ -61,4 +73,5 @@ export const REPORT_TOOL = {
       description: 'One short paragraph Partner can relay to wish.',
     },
   },
+  output: { schema: { type: 'object' }, render: renderText },
 }

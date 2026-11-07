@@ -26,18 +26,20 @@ function failed(reason) {
  * every dispatched worker, then relays a worker's report into this session.
  * @returns the channel, or undefined when the Host exposes no session identity
  */
+/** Channels created by `bindReportChannel`, keyed by the context that created them. */
+export const reportChannels = new WeakMap()
+
 export function bindReportChannel(ctx) {
   if (!ctx.tools || typeof ctx.on !== 'function') return undefined
-  const sessionId = ctx.session ? ctx.session.id : undefined
   const channel = createReportChannel({
-    getPartnerAgent: () => (ctx.agents ? ctx.agents.get(sessionId) : undefined),
+    getPartnerAgent: (sessionId) => (ctx.agents && sessionId ? ctx.agents.get(sessionId) : undefined),
   })
-  if (sessionId) channel.configure({ partnerSessionId: sessionId })
   ctx.effect(() => ctx.on('agent/status', (payload) => channel.onStatus(payload)))
+  reportChannels.set(ctx, channel)
   return channel
 }
 
-export async function dispatch(ctx, args) {
+export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChannel) {
   const preset = WORKER_KINDS[args.kind]
   if (preset === undefined) {
     return failed(`Unknown worker type "${args.kind}". Use discoverer or implementer.`)
@@ -63,7 +65,11 @@ export async function dispatch(ctx, args) {
     const agent = resolved.agent
     permissionPresets.set(agent.session, 'danger-full-access')
     await sessionController.rename({ sessionId, title: args.title })
-    if (ctx.reportChannel) ctx.reportChannel.track(sessionId)
+    if (reportChannel) {
+      const caller = exec && exec.agent && exec.agent.id
+      if (caller) reportChannel.adoptPartner(caller)
+      reportChannel.track(sessionId)
+    }
     await agent.followup({ role: 'user', content: [{ type: 'text', text: args.body }] })
 
     return {
@@ -168,6 +174,7 @@ export function apply(ctx) {
       text: ROLE_SECTION_TEXT,
     }),
   )
-  ctx.effect(() => ctx.tools.register(DISPATCH_TOOL, { execute: (args) => dispatch(ctx, args) }))
-  ctx.reportChannel = bindReportChannel(ctx)
+  // The channel lives in this closure: Cordis forbids assigning onto the context.
+  const reportChannel = bindReportChannel(ctx)
+  ctx.effect(() => ctx.tools.register(DISPATCH_TOOL, { execute: (args, exec) => dispatch(ctx, args, exec, reportChannel) }))
 }

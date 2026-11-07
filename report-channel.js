@@ -22,7 +22,7 @@ export function formatReport(workerSessionId, state, summary) {
 
 /**
  * @param {object} deps
- * @param {() => object | undefined} deps.getPartnerAgent returns the live Partner agent
+ * @param {(sessionId: string) => object | undefined} deps.getPartnerAgent returns the live agent of a session
  * @param {(text: string, id: string) => void} [deps.onRelay] observes each delivery
  */
 export function createReportChannel(deps) {
@@ -42,7 +42,8 @@ export function createReportChannel(deps) {
     const id = identity(workerId, report)
     if (delivered.has(id)) return false
     delivered.add(id)
-    const agent = deps.getPartnerAgent()
+    const target = partnerSessionId ?? workerId
+    const agent = deps.getPartnerAgent(target)
     if (!agent || typeof agent.steer !== 'function') return false
     const message = { role: 'user', content: [{ type: 'text', text: formatReport(workerId, report.state, report.summary) }], id }
     agent.steer(message)
@@ -64,6 +65,11 @@ export function createReportChannel(deps) {
 
     get partnerSessionId() {
       return partnerSessionId
+    },
+
+    /** Records the Partner session id, learned from the dispatching tool call. */
+    adoptPartner(sessionId) {
+      if (sessionId) partnerSessionId = sessionId
     },
 
     /** Called by the worker-side tool with the worker's session and turn. */
