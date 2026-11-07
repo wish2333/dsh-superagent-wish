@@ -19,7 +19,7 @@ import { sharedPolicy } from './policy.js'
 import { recordPatrol } from './sources.js'
 import { sharedStore } from './working-units.js'
 
-export const inject = ['systemPrompt', 'agentPresets', 'sessionController']
+export const inject = ['systemPrompt', 'tools', 'agentPresets', 'sessionController']
 
 /**
  * The one tool the Secretary calls: a patrol.

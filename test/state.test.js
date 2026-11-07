@@ -165,3 +165,13 @@ test('a report records the session that sent it', () => {
   const reported = report(unit, { state: 'blocked', summary: 'Needs the schema decided', source: 'superagent-wish-unit-1' })
   assert.equal(reported.assignments[0].report.source, 'superagent-wish-unit-1')
 })
+
+test('a stop after the round already ended leaves the unit waiting for an input', () => {
+  const unit = begin(UNIT, { scope: 'src/', strength: 'explicit', policyVersion: 'policy-1', basis: 'wish' })
+  const started = dispatch(unit, { state: 'start', at: '2026-01-01T00:00:01.000Z' })
+  const waited = report(started, { state: 'waiting', summary: 'The turn ended without a report' })
+  assert.equal(waited.state, 'running')
+  const stopped = dispatch(waited, { state: 'stop', at: '2026-01-01T00:00:09.000Z' })
+  assert.equal(stopped.state, 'waiting-for-input')
+  assert.equal(stopped.assignments.at(-1).state, 'ended')
+})

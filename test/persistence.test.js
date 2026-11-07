@@ -124,3 +124,19 @@ test('an id a stored unit still holds is not issued again', async () => {
   assert.equal(secondId, 'unit-2')
   assert.equal(next.id, 'unit-3')
 })
+
+test('an input delivered but not yet read is stored and read back', async () => {
+  const first = await open()
+  const { id } = await start(first.store)
+  await first.store.start(id)
+  const unit = first.store.get(id)
+  await first.store.deliver(id, [unit.undelivered[0]])
+  first.host.dispose()
+
+  // A `readAt` of null means "delivered, not yet read": the stored record must
+  // pass the schema the Host validates at open.
+  const second = await open(createStorageDomain(first.medium.snapshot()))
+  const reloaded = second.store.get(id)
+  assert.equal(reloaded.inputs[0].readAt, null)
+  assert.equal(reloaded.inputs[0].deliveredTo, `${id}/assignment-0`)
+})

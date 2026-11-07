@@ -123,7 +123,14 @@ function stop(unit, fact) {
   if (unit.state === 'ended') return unit
   const assignment = unit.assignments.at(-1)
   const at = fact.at ?? unit.updatedAt
-  if (!assignment || assignment.state === 'ended') return unit
+  if (!assignment) return unit
+  // The round may already be over — a `waiting`, `ready` or `blocked` report
+  // ends it — and stopping then still leaves the unit waiting for an input:
+  // nothing of it keeps running.
+  if (assignment.state === 'ended') {
+    if (unit.state === 'waiting-for-input') return unit
+    return { ...unit, state: 'waiting-for-input', updatedAt: at }
+  }
   const unread = unit.inputs
     .filter((input) => input.deliveredTo === assignment.id && input.readAt === null && !unit.undelivered.includes(input.id))
     .map((input) => input.id)

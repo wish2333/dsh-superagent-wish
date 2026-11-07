@@ -68,6 +68,8 @@ const nested = (inner) => (value, path) => {
 const requiredString = (value, path) => checkString(value, path)
 const requiredOneOf = (...allowed) => (value, path) => checkOneOf(value, allowed, path)
 const optionalString = (value, path) => (value === undefined ? undefined : checkString(value, path))
+/** A string once it is known, `null` while it is not: delivered input waits to be read. */
+const nullableString = (value, path) => (value === undefined || value === null ? value : checkString(value, path))
 const stringList = (value, path) => {
   if (!Array.isArray(value)) fail(path, 'expected a list of strings')
   return value.map((item, index) => checkString(item, `${path}[${index}]`))
@@ -145,7 +147,7 @@ const inputRecord = record({
   to: optionalString,
   rules: (value, path) => (value === undefined ? undefined : rulesList(value, path)),
   deliveredTo: optionalString,
-  readAt: optionalString,
+  readAt: nullableString,
 })
 
 const assignmentRecord = record({
