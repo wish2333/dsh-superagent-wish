@@ -108,7 +108,7 @@ Partner 确认后按下表派发，接口细节见 `../impl/superagent-impl.md` 
 | 2 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` 起会话，启发者或执行者 |
 | 3 | `ctx.permissionPresets.set(session, 'danger-full-access')` 设权限 |
 | 4 | `ctx.sessionController.rename({ sessionId, title })` 用任务标题命名 |
-| 5 | `agentDelivery.send(agent, requestId, text, 'queue')` 送 exploratory prompt 或 task spec |
+| 5 | `agent.followup(message)` 送 exploratory prompt 或 task spec |
 
 Worker 是独立 DSH 会话，不是子代理。模型不指定，用会话默认。
 

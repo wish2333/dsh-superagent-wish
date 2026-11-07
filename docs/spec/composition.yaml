@@ -1,6 +1,7 @@
 # ./composition.yaml
 # 组合层：两类 Worker 的 preset 与工具边界
 # 规格说明见 composition-spec.md，技术方案见 ../impl/superagent-impl.md
+# Worker 是独立 DSH 会话，不用子代理（R28）
 
 version: "2.0"
 
@@ -38,10 +39,10 @@ workers:
 
 runtime_binding:
   dsh:
-    preset_registration: ctx.agentPresets.register
+    preset_registration: "@deepseek-ai/dsh-agent-preset"
     session_creation: ctx.sessionController.create
     workspace: ctx.workspaceRegistry.create
     permission: ctx.permissionPresets.set
-    delivery: agentDelivery.send
+    delivery: agent.followup
     permission_mode: danger-full-access
     model: default

@@ -14,6 +14,7 @@ When the Partner preset is selected in a session, the agent receives the collabo
 ## Requirements
 
 - DeepSeek Harness with the `agentPresets` and `systemPrompt` Host services.
+- For Worker dispatch: the `sessionController`, `workspaceRegistry`, `permissionPresets`, and `agents` Host services. A Worker is a separate DSH session, not a subagent (R28).
 
 ## Installation
 
@@ -54,7 +55,7 @@ After installation, select the **Partner** preset when starting a new session.
 
 ## Status
 
-The Partner preset and its system-prompt injection are implemented. Worker session creation is designed in `docs/impl/superagent-impl.md` and not implemented yet.
+The Partner preset and its system-prompt injection are implemented. Worker session creation is designed in `docs/impl/superagent-impl.md` and not implemented yet. Workers are separate DSH sessions created by Partner (R28); the dispatch chain follows the `dsh-superagent` prototype.
 
 ## License
 

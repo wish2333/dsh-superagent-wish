@@ -9,10 +9,11 @@
 | `workspaceRegistry` | 给每个 Worker 建独立工作目录 | 已验证（`create(cwd)`） |
 | `sessionController` | 起 Worker 会话、取名、取回会话 | 已验证（`create` / `rename` / `resolveAgent`） |
 | `permissionPresets` | 设 Worker 会话权限 | 已验证（`set(session, 'danger-full-access')`） |
+| `agents` | 取 live Agent，调 `followup` / `steer` / `inject` 送任务 | 已验证（`get(id)`）；`followup` 等方法在 `Agent` 上 |
 
 验证依据：`/Applications/DeepSeek Harness.app/Contents/Resources/app.asar` 的类型声明。
 
-当前实现只用到前两项。后三项在派发链路实现时才接入，技术方案见 `../impl/superagent-impl.md`。
+当前实现只用到前两项。后四项在派发链路实现时才接入，技术方案见 `../impl/superagent-impl.md`。
 
 ---
 

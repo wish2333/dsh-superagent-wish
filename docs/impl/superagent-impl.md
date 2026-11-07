@@ -17,21 +17,26 @@ SuperAgent 层就是 Partner（主 Agent）。它和 Worker 都是 DSH 会话，
 
 Partner 在会话启动时选中；Worker 会话由 Partner 派发时创建，不供手动选择。
 
+Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，Partner 不用子代理派活。
+
 ---
 
 ## 二、派发链路
 
-每一步用的都是 DSH Host 服务，原型 `dsh-superagent` 已在用同一组接口。
+每一步用的都是 DSH Host 服务。原型 `dsh-superagent` 的 `Sessions.ensure`（`src/app/sessions.ts:138-155`）已跑通这条链，本插件照它的顺序实现。
 
 | 步骤 | 接口 | 说明 |
 |---|---|---|
+| 0. 查会话 | `ctx.sessionController.resolveAgent(sessionId)` | 会话已存在就复用，不重复创建 |
 | 1. 建工作目录 | `ctx.workspaceRegistry.create(cwd)` | 每个 Worker 一个独立目录 |
 | 2. 起 Worker 会话 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` | `agentPreset` 指定启发者或执行者 |
 | 3. 取到会话 | `ctx.sessionController.resolveAgent(sessionId)` | 返回 live Agent |
 | 4. 设权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` | 与原型一致 |
 | 5. 命名 | `ctx.sessionController.rename({ sessionId, title })` | 标题取任务标题 |
-| 6. 送任务 | `agentDelivery.send(agent, requestId, text, mode)` | `mode` 三档：`queue` / `steer` / `inject` |
+| 6. 送任务 | `agent` 的 `followup(message)` / `steer(message)` / `inject(message)` | 原型的 `AgentDelivery.send`（`src/app/delivery.ts:66-85`）是插件自己的类，不是 Host 服务；它用 `requestId` 去重后落到这三个方法 |
 | 7. 收结果 | 监听会话事件 | Worker 完成后由 Partner 整合 |
+
+`followup` 送下一轮任务，`steer` 改动当前轮，`inject` 只写入历史不唤醒会话。
 
 插件声明的依赖：
 
@@ -102,3 +107,4 @@ Worker 的结果回到 Partner，由 Partner 整合后交给你，不直接透�
 | 原型钉的是 `@deepseek-ai/dsh-api-session-controller@0.2.1-alpha.2` | 与本机 DSH 版本可能不一致 | 装好后核对版本 |
 | 确认点靠行为约定 | 可能漏掉确认直接派发 | 规格里写死，后续可加运行时检查 |
 | 无 Watchdog | Worker 卡住时无自动告警 | Worker 自报卡点 |
+| `@deepseek-ai/dsh-agent-preset` 能否从本机 profile 解析，未验证 | 按原型用 YAML 声明 Worker preset 可能加载失败 | 加载失败时退回 `ctx.agentPresets.register()` 注册 |

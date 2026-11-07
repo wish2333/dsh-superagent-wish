@@ -91,7 +91,7 @@ Worker 类型：启发者（discoverer）、执行者（implementer）。两类 
 
 **当前实现**：DeepSeek Harness 插件（本仓库）。
 - 任务入口：你的消息
-- 分派：`ctx.sessionController.create({ agentPreset })`，每个 Worker 一个独立会话和工作目录
+- 分派：`ctx.sessionController.create({ agentPreset })`，每个 Worker 一个独立会话和工作目录（R28）
 - 派发前由 Partner 暂停等确认；DSH 无强制机制
 - 已知限制：无 Watchdog，Worker 卡住时靠自报
 

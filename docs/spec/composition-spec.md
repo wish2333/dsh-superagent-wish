@@ -8,7 +8,7 @@
 
 ## 一、位置与职责
 
-Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。
+Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不用子代理派活（R28）。
 
 - 每个 Worker 会话有一个 preset。
 - preset 决定 Worker 能用哪些工具。
@@ -62,11 +62,11 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。
 
 | 项目 | 方式 |
 |---|---|
-| preset 注册 | `ctx.agentPresets.register({ id, name, description, order, plugins })` |
+| preset 注册 | 原型用 YAML 声明 `@deepseek-ai/dsh-agent-preset`；加载失败时退回 `ctx.agentPresets.register({ id, name, description, order, plugins })` |
 | Worker 会话创建 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` |
 | 工作目录 | `ctx.workspaceRegistry.create(cwd)` |
 | 权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` |
-| 送任务 | `agentDelivery.send(agent, requestId, text, 'queue')` |
+| 送任务 | `agent.followup(message)`；改当前轮用 `agent.steer(message)` |
 | 模型 | 不指定，用会话默认 |
 
 ---
