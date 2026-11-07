@@ -144,9 +144,13 @@ function stop(unit, fact) {
 export function report(unit, incoming) {
   if (unit.state === 'ended') throw new WorkingUnitError('workingUnit/ended', 'The working unit has ended')
   const at = incoming.at ?? unit.updatedAt
+  const latest = unit.assignments.at(-1)
+  // A discoverer's `ready` ended the unit, and the `waiting` the executor adds
+  // when that same turn goes idle must not replace the result wish is to judge.
+  if (incoming.state === 'waiting' && latest?.report?.state === 'ready') return unit
   const assignments = unit.assignments.map((assignment, index) =>
     index === unit.assignments.length - 1
-      ? { ...assignment, report: { state: incoming.state, summary: incoming.summary, at } }
+      ? { ...assignment, report: { state: incoming.state, summary: incoming.summary, at, ...(incoming.source ? { source: incoming.source } : {}) } }
       : assignment)
   const reported = withAssignments(unit, assignments)
   switch (incoming.state) {

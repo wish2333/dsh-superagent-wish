@@ -77,6 +77,9 @@ const reportFields = {
   state: requiredOneOf('progress', 'waiting', 'ready', 'blocked', 'failed', 'dropped'),
   summary: requiredString,
   at: requiredString,
+  // The Session that sent the report: a Worker Session, or the executor for a
+  // `waiting` it added to a turn that ended without one.
+  source: optionalString,
 }
 
 const workingUnitRecord = record({
@@ -90,6 +93,7 @@ const workingUnitRecord = record({
   partnerSessionId: requiredString,
   workerSessionId: requiredString,
   directory: requiredString,
+  // The ids of the unit's rows; each row lives in its own table.
   inputs: stringList,
   undelivered: stringList,
   assignments: stringList,

@@ -1,3 +1,4 @@
+import { relayReport } from './relay.js'
 import { openWorkingUnits } from './working-units.js'
 
 /**
@@ -6,11 +7,11 @@ import { openWorkingUnits } from './working-units.js'
  *
  * A Worker is a separate DSH Session that Partner dispatched. It reaches
  * Partner only through `partner_report`: the plugin records the report on the
- * working unit, and the relay that carries it to Partner is the host side's
- * (ticket 03), not this tool.
+ * working unit, and `relay.js` carries it to Partner as a message from this
+ * Worker's Session.
  */
 
-export const inject = ['systemPrompt', 'tools']
+export const inject = ['systemPrompt', 'tools', 'sessionController']
 
 /** The report states a Worker may carry, with what each one means for the unit. */
 export const REPORT_STATES = {
@@ -28,6 +29,7 @@ export const REPORT_TOOL = {
     'State what is true now, not what you plan to do. Report blocked rather than deciding a product or scope question yourself.',
     `States: ${Object.entries(REPORT_STATES).map(([state, meaning]) => `${state} — ${meaning}`).join('; ')}.`,
     'The summary must be specific enough for wish to judge: what was produced, where it is, and what changed.',
+    'Partner hears a ready, blocked or failed report, and any report carrying a question; a progress report stays in the tables.',
   ].join(' '),
   parameters: {
     type: 'object',
@@ -41,6 +43,10 @@ export const REPORT_TOOL = {
       summary: {
         type: 'string',
         description: 'What was done and what is there now: files, findings or the exact decision the work waits on.',
+      },
+      question: {
+        type: 'string',
+        description: 'Optional. The exact question wish must answer, when one stops the work. A report carrying a question always reaches Partner.',
       },
     },
     required: ['state', 'summary'],
@@ -65,8 +71,9 @@ export const UNIT_SESSION = /^superagent-wish-(unit-\d+)$/
  * @param store the open working-unit tables
  * @param sessionId the calling Worker Session
  * @param args the report
+ * @param partner the context that carries the report to Partner, which declares `sessionController`
  */
-export async function record(ctx, store, sessionId, args) {
+export async function record(ctx, store, sessionId, args, partner) {
   const match = UNIT_SESSION.exec(String(sessionId ?? ''))
   const unit = match ? store.get(match[1]) : undefined
   if (!unit) {
@@ -83,7 +90,16 @@ export async function record(ctx, store, sessionId, args) {
   if (!(state in REPORT_STATES)) return refused(`Unknown report state "${state}". Use ${Object.keys(REPORT_STATES).join(', ')}.`)
   if (!summary) return refused('A report needs a summary that says what was done or what the work waits on.')
 
+  const question = String(args.question ?? '').trim() || undefined
   const updated = await store.report(unit.id, { state, summary, source: sessionId })
+  // A report that should reach Partner is carried now, as the turn it belongs
+  // to is still the Worker's; a failure to carry it leaves the record, which
+  // Partner reads when it looks.
+  try {
+    await relayReport(partner, updated, { state, summary, question, source: sessionId }, { round: unit.assignments.at(-1)?.id })
+  } catch (error) {
+    ctx.logger?.warn?.(`superagent-wish: ${unit.id}: the report did not reach Partner: ${String(error)}`)
+  }
   return {
     content: [{
       type: 'text',
@@ -115,7 +131,7 @@ export function mountWorker(ctx, section) {
       ...REPORT_TOOL,
       execute: async (args, exec) => {
         try {
-          return await record(storeCtx, await store(), exec?.agent?.id, args ?? {})
+          return await record(storeCtx, await store(), exec?.agent?.id, args ?? {}, storeCtx)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           return refused(message.replace(/\s+/g, ' ').trim().replace(/\.$/, ''))

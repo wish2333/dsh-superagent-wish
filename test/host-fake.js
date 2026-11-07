@@ -249,6 +249,18 @@ export function createHost(options = {}) {
     async emit(name, payload) {
       for (const handler of listeners.get(name) ?? []) await handler(payload)
     },
+    /**
+     * Moves an Agent between `idle` and `running` the way the real loop does: a
+     * woken delivery enters `running` first, and the turn's end emits
+     * `agent/status` with `{ agent, status: 'idle' }`.
+     * @param agent the live Agent the event carries
+     * @param status the status just entered
+     */
+    async setStatus(agent, status) {
+      agent.status = status
+      record('agent/status', { agent: agent.id, status })
+      await this.emit('agent/status', { agent, status })
+    },
   }
 }
 
