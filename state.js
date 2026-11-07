@@ -167,6 +167,9 @@ export function report(unit, incoming) {
 /**
  * Add input and queue it, returning a unit waiting for a decision or for input
  * to running with a new assignment.
+ *
+ * An ended unit is not continued: ending is final, and the same work needs a
+ * new unit.
  * @throws WorkingUnitError `workingUnit/ended` when the unit has ended
  */
 export function followup(unit, incoming) {

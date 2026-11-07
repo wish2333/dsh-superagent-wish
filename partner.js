@@ -285,14 +285,22 @@ export async function dispatch(ctx, store, policy, args, exec) {
  *
  * No confirmation and no directory work: the unit already has both. A Worker
  * Session deleted outside the plugin is opened again from the unit id.
+ *
+ * An ended unit is not continued either way, but the refusal says which of the
+ * two it is: the policy that holds the unit's mandate still holds it, so the
+ * unit is simply finished, or the policy no longer holds it, so the mandate
+ * would not be valid even if the unit were opened again.
  */
-export async function followup(ctx, store, args, exec) {
+export async function followup(ctx, store, policy, args, exec) {
   const unitId = String(args.unitId ?? '').trim()
   const text = String(args.text ?? '').trim()
   if (!text) return refused('Follow-up refused: there is no text to send.')
   const unit = store.get(unitId)
   if (!unit) return refused(`Follow-up refused: there is no working unit ${unitId}.`)
   if (unit.state === 'ended') {
+    if (!policy.revalidate(unit.mandate)) {
+      return refused(`Follow-up refused: working unit ${unitId} ended, and the policy no longer holds its mandate, so it stays ended. Start a new working unit for this work.`)
+    }
     return refused(`Follow-up refused: working unit ${unitId} has ended. Start a new working unit for new work.`)
   }
 
@@ -369,7 +377,7 @@ export function apply(ctx) {
       storeCtx.effect(() => () => { openedPolicy?.then((handle) => handle.close()).catch(() => {}) })
       const bodies = {
         partner_dispatch: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => dispatch(workerCtx, handle, rules, args, exec))),
-        partner_followup: guarded((args, exec) => store().then((handle) => followup(workerCtx, handle, args, exec))),
+        partner_followup: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => followup(workerCtx, handle, rules, args, exec))),
         partner_stop: guarded((args) => store().then((handle) => stopUnit(workerCtx, handle, args))),
         partner_list: guarded((args) => store().then((handle) => listUnits(handle, args))),
       }

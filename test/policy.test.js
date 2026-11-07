@@ -273,3 +273,43 @@ async function changeRules(host, rules) {
   const { store, policy } = await partnerModule.handles(host.ctx)
   return savePolicy(policy, store, host.ctx, { rules }, { id: PARTNER, header: { cwd: host.base } })
 }
+
+/**
+ * A policy that withdraws the mandate of every unit already open: a unit was
+ * opened under rules that named it, and the rules now name something else. The
+ * version no longer matches, so the mandate does not revalidate.
+ */
+const WITHDRAWN = { rules: [{ id: 'other', name: 'Other', enabled: true, instruction: 'Only this rule applies now.' }] }
+
+test('an ended unit that is asked to continue is revalidated against the current policy', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', { ...DISPATCH, type: 'discoverer' })
+    await call(host, 'partner_report', { state: 'ready', summary: 'Wrote three options.' }, 'superagent-wish-unit-1')
+    assert.equal(stored(host, 'unit-1').state, 'ended')
+    // The rules that unit was opened under are replaced.
+    await (await partnerModule.handles(host.ctx)).policy.setPolicy(WITHDRAWN)
+
+    const text = textOf(await call(host, 'partner_followup', { unitId: 'unit-1', text: 'Carry on.' }))
+    assert.match(text, /no longer holds|policy/i)
+    assert.doesNotMatch(text, /\n/, 'the error is one sentence')
+    assert.equal(stored(host, 'unit-1').state, 'ended', 'it stays ended')
+    assert.deepEqual(host.callsTo('sessionController.create').length, 1, 'no worker was opened again')
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('an ended unit whose mandate still holds stays ended for the ordinary reason', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', { ...DISPATCH, type: 'discoverer' })
+    await call(host, 'partner_report', { state: 'ready', summary: 'Wrote three options.' }, 'superagent-wish-unit-1')
+    const text = textOf(await call(host, 'partner_followup', { unitId: 'unit-1', text: 'Carry on.' }))
+    // Ending is final, and the refusal does not blame the policy for it.
+    assert.match(text, /has ended/)
+    assert.doesNotMatch(text, /no longer holds/)
+  } finally {
+    await host.cleanup()
+  }
+})
