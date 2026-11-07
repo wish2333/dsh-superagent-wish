@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost, createStorageDomain } from './host-fake.js'
 import * as secretary from '@wish2333/dsh-superagent-wish/secretary'
+import { apply as applyManager } from '@wish2333/dsh-superagent-wish'
 
 test('the Secretary preset adds one prompt section describing its job', async () => {
   const host = createHost({ services: secretary.inject ?? [] })
@@ -28,14 +29,32 @@ async function openPartner(partnerId = 'partner-1', options = {}) {
   // Host that mounts them provides a storage domain and a Session controller.
   const services = [...new Set([...(secretary.inject ?? []), 'storageDomain'])]
   const host = createHost({ services, ...options })
+  // The manager owns the listener that starts a Secretary: the Secretary module
+  // is mounted only by its own preset, which does not exist before the first
+  // Secretary does.
+  applyManager(host.ctx)
   secretary.apply(host.ctx)
-  const agent = host.setAgent(partnerId, { id: partnerId, session: { id: partnerId } })
-  host.setPreset(agent.session, PARTNER)
+  const agent = host.setAgent(partnerId, { id: partnerId, session: { id: partnerId }, ctx: { agent: partnerId } })
+  // An early-preset Host answers `presetForSession` with null, as the real one does
+  // at creation, and only `composedPreset` knows the preset.
+  if (!options.earlyPreset) host.setPreset(agent.session, PARTNER)
+  if (options.earlyPreset) host.setComposedPreset(agent.ctx, PARTNER)
   host.mounts = host.callsTo('tools.register').map((item) => item.args.definition)
   host.calls.length = 0
   await host.emit('agent/created', { agent, source: 'startup' })
   return host
 }
+
+test('the Partner preset is read from the Agent at creation, before the Session records it', async () => {
+  // The Host publishes `agent/created` before it writes the selection onto the
+  // Session, so `presetForSession` is null there while the Agent already runs
+  // the Partner preset. Reading only the Session would create no Secretary.
+  const host = await openPartner('partner-early', { earlyPreset: true })
+  const created = host.callsTo('sessionController.create').map((call) => call.args)
+  assert.equal(created.length, 1, 'the Secretary is created for a Partner whose Session has no recorded preset yet')
+  assert.equal(created[0].agentPreset, SECRETARY)
+  assert.equal(created[0].sessionId, 'partner-early-secretary')
+})
 
 test('a new Partner session gets one Secretary session', async () => {
   const host = await openPartner()
@@ -48,6 +67,7 @@ test('a new Partner session gets one Secretary session', async () => {
 test('an ordinary session gets no Secretary', async () => {
   for (const preset of ['superagent-wish-discoverer', 'superagent-wish-implementer', null]) {
     const host = createHost({ services: secretary.inject ?? [] })
+    applyManager(host.ctx)
     secretary.apply(host.ctx)
     const agent = host.setAgent('ordinary-1', { id: 'ordinary-1', session: { id: 'ordinary-1' } })
     if (preset) host.setPreset(agent.session, preset)
@@ -58,6 +78,7 @@ test('an ordinary session gets no Secretary', async () => {
 
 test('an unreadable preset id creates no Secretary and does not fail creation', async () => {
   const host = createHost({ services: secretary.inject ?? [] })
+  applyManager(host.ctx)
   secretary.apply(host.ctx)
   const agent = host.setAgent('unreadable-1', { id: 'unreadable-1', session: { id: 'unreadable-1' } })
   host.setPreset(agent.session, { unreadable: true })

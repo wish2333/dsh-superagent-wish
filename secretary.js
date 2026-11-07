@@ -217,8 +217,22 @@ export async function rulesNow(ctx) {
   }
 }
 
-/** @returns the preset id recorded for `agent`'s session, or `undefined` when unreadable. */
-function presetOf(ctx, agent) {
+/**
+ * The preset `agent` is running.
+ *
+ * `agent/created` fires before the Host records the selection on the Session, so
+ * `presetForSession` still reads `null` there; the preset the Agent is actually
+ * composed with is available on its own context from the first moment. The
+ * Session's record is the fallback for a Host that composes no preset.
+ * @returns the preset id, or `undefined` when neither source can tell
+ */
+export function presetOf(ctx, agent) {
+  try {
+    const composed = ctx.agentPresets.composedPreset?.(agent.ctx)
+    if (composed) return composed
+  } catch {
+    // Fall through to the Session's record.
+  }
   try {
     return ctx.agentPresets.presetForSession(agent.session) ?? undefined
   } catch {
@@ -248,8 +262,13 @@ export function secretaryIdFor(partnerId) {
  *
  * A failure here is logged and contained: `agent/created` is a serial event,
  * so throwing would fail the Partner session that this Secretary serves.
+ *
+ * The caller must be a scope that outlives any one preset — the manager. This
+ * module is loaded only when the Secretary preset mounts, which is to say only
+ * after the first Secretary exists, so a listener registered here would never
+ * start the first one.
  */
-async function ensureSecretary(ctx, agent) {
+export async function ensureSecretary(ctx, agent) {
   const sessionId = secretaryIdFor(agent.id)
   try {
     if (await exists(ctx, sessionId)) return
@@ -373,7 +392,20 @@ export function apply(ctx) {
       })
     })
   }
-  ctx.on('agent/created', async ({ agent }) => {
+}
+
+/**
+ * Start a Secretary beside every new Partner Session.
+ *
+ * The manager calls this, not {@link apply}: this module is mounted by the
+ * Secretary preset, so its own `apply` runs only once a Secretary session is
+ * being created, and a listener there would never see the first Partner.
+ *
+ * @param ctx the manager context, which provides `agentPresets` and `sessionController`
+ * @returns the listener's disposer
+ */
+export function watchPartnerSessions(ctx) {
+  return ctx.on('agent/created', async ({ agent }) => {
     if (presetOf(ctx, agent) !== PARTNER_PRESET) return
     await ensureSecretary(ctx, agent)
   })

@@ -10,6 +10,7 @@
 import { sharedStore } from './working-units.js'
 import { apply as applySources, applySchedule } from './sources.js'
 import { applyJudge } from './judge.js'
+import { watchPartnerSessions } from './secretary.js'
 import { sharedPolicy } from './policy.js'
 import { slotsFrom } from './queue.js'
 import { configureSlots, openPump, pumpFor, registeringPump } from './pump.js'
@@ -200,6 +201,13 @@ export function apply(ctx, config) {
   ctx.inject(['storageDomain', 'sessionController', 'schedule'], (scheduleCtx) => {
     applyJudge(scheduleCtx)
     applyScheduleFromPolicy(scheduleCtx)
+  })
+  // A Secretary starts beside every new Partner Session. The listener lives
+  // here, not in the Secretary module: a preset's rows load only when that
+  // preset mounts, so a listener in `secretary.js` could never start the first
+  // Secretary — it would run only after one already existed.
+  ctx.inject(['agentPresets', 'sessionController'], (secretaryCtx) => {
+    watchPartnerSessions(secretaryCtx)
   })
   for (const preset of PRESETS) {
     const registration = ctx.agentPresets.register({

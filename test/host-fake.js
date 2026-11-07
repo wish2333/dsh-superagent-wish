@@ -15,6 +15,7 @@ export function createHost(options = {}) {
   const calls = []
   const listeners = new Map()
   const agents = new Map()
+  const composed = new Map()
   const disposers = []
   const presets = new Map()
   const workingDirectories = new Map()
@@ -60,6 +61,15 @@ export function createHost(options = {}) {
         if (preset === undefined) return null
         if (preset.unreadable) throw new Error('read failed')
         return preset.id
+      },
+      /**
+       * The preset an Agent is composed with, read from its own context. The
+       * real registry answers this at `agent/created`, before the Session
+       * records its selection; a Host without the call falls back to the record.
+       */
+      composedPreset(agentCtx) {
+        record('agentPresets.composedPreset', agentCtx)
+        return composed.get(agentCtx)
       },
     },
     systemPrompt: {
@@ -280,6 +290,14 @@ export function createHost(options = {}) {
      */
     setPreset(session, preset) {
       presets.set(session, typeof preset === 'string' || preset === null ? { id: preset } : preset)
+    },
+    /**
+     * Records the preset `agentPresets.composedPreset(agent.ctx)` reports: the
+     * preset the Agent runs, as the real registry answers it from the Agent's
+     * own composition.
+     */
+    setComposedPreset(agentCtx, preset) {
+      composed.set(agentCtx, preset)
     },
     /** Runs every disposer an effect registered, as unloading the plugin would. */
     dispose() {
