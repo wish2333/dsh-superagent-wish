@@ -17,6 +17,7 @@ A **Secretary** session is created alongside each new Partner session. It judges
 
 - DeepSeek Harness with the `agentPresets`, `systemPrompt` and `tools` Host services.
 - For dispatch: the `sessionController`, `workspaceRegistry`, `permissionPresets`, `agents` and `workingDirectory` Host services. A Worker is a separate DSH session, not a subagent (R28).
+- For the working-unit tables: the `storageDomain` Host service. A Host without it leaves the Partner tools absent and the rest of the preset mounted.
 - For the Secretary: an event-source configuration block and the `agent/created` event.
 
 ## Installation
@@ -36,13 +37,15 @@ After installation, select the **Partner** preset when starting a new session. T
 ```
 .
 ├── index.js                    Manager: registers the four presets
-├── partner.js                  Partner preset: collaboration prompt + partner_dispatch
+├── state.js                    Working unit state machine (pure)
+├── schema.js                   Record schemas and the domain spec of the four tables
+├── working-units.js            The four tables, opened over ctx.storageDomain
+├── sessions.js                 Executor: the dispatch chain, delivery, stop, model choice
+├── partner.js                  Partner preset: collaboration prompt + the four partner_* tools
+├── secretary.js                Secretary preset: judges external events, one per Partner session
+├── worker.js                   partner_report, shared by both Worker presets
 ├── worker-discoverer.js        启发者 preset: writes inside its own directory + partner_report
 ├── worker-implementer.js       执行者 preset: write tools + partner_report
-├── worker-shared.js            Prompt rules both worker roles share
-├── tools.js                    Tool definitions and worker-kind to preset map
-├── report.js                   Worker-side report tool
-├── report-channel.js           Host side: report relay and the waiting fallback
 ├── test/                       node:test suite against a fake Host context
 ├── cordis.patch.yml            Bundle patch — inserts the manager entry
 ├── locale/
@@ -70,18 +73,17 @@ After installation, select the **Partner** preset when starting a new session. T
 
 ## Status
 
-Three presets are registered and load without a diagnostic; each is mounted from its own submodule (ADR-0002) with its tool plugins listed as preset rows (ADR-0003). A dispatch creates a worker session and delivers its first message; two real dispatches have run end to end.
+Five presets are registered; each is mounted from its own submodule (ADR-0002) with its tool plugins listed as preset rows (ADR-0003).
 
-The plugin is not in use yet. A rewrite is planned that turns a dispatch into a **working unit** and adds the Secretary: `docs/design/working-unit.md`.
+A dispatch starts a **working unit**: Partner gets its id, and every later tool names that id. The unit keeps one Worker session (`superagent-wish-<unit id>`) and one directory (`<Partner directory>/superagent-wish/<unit id>`) for its whole life, so a follow-up reaches the same Worker and a title change renames the session only. All eight `partner_*` tools exist; see `docs/impl/superagent-impl.md` §3-bis for what each one does.
 
 Current gaps:
 
-- There is no working unit, so a worker gets one message and nothing can be added to it afterwards. `partner_followup`, `partner_stop` and `partner_list` do not exist.
-- Reports are relayed with a `user` source, so they read as wish's own words. They should carry `agent-message`.
-- `partner_dispatch` returns a session id rather than a working-unit id.
-- The preset ids still say `superagent-wish-recruiter` for Partner; the rewrite renames it to `superagent-wish-partner`.
+- A Worker's `partner_report` is recorded on its unit, but nothing carries it to Partner yet and a turn that ends without a report gets no `waiting` report.
+- Dispatch takes no concurrency slot, so the number of implementers running at once is not limited.
+- A scheduled task is delivered by the Host into a Secretary conversation before the plugin reads anything; a Host whose delivery fails keeps the task and warns, and that patrol is lost until the next period.
 
-`npm test` covers the Host boundary, the dispatch chain, and the relay.
+`npm test` covers the Host boundary, the dispatch chain, the Partner tools, the two event sources and the judgement.
 
 ## License
 

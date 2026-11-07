@@ -106,14 +106,19 @@ export const inject = ['systemPrompt', 'tools', 'agents']
 
 | 工具 | 挂在哪个 preset | 作用 | 状态 |
 |---|---|---|---|
-| `partner_dispatch` | 只有 Partner | 起一个工作单元，返回工作单元 id | 已实现，返回的是 `sessionId`，重写后改为工作单元 id |
-| `partner_followup` | 只有 Partner | 向一个工作单元追加输入，投给当前的 Worker 会话 | 未实现 |
-| `partner_stop` | 只有 Partner | 中止当前这一轮；工作单元仍在，之后可以追问 | 未实现 |
-| `partner_list` | 只有 Partner | 查工作单元的状态和被判掉的外部事件 | 未实现 |
+| `partner_dispatch` | 只有 Partner | 起一个工作单元，返回工作单元 id | 已实现 |
+| `partner_followup` | 只有 Partner | 向一个工作单元追加输入，投给当前的 Worker 会话 | 已实现 |
+| `partner_stop` | 只有 Partner | 中止当前这一轮；工作单元仍在，之后可以追问 | 已实现 |
+| `partner_list` | 只有 Partner | 查工作单元的状态和被判掉的外部事件 | 已实现，判掉的事件带时间、事件和理由 |
+| `partner_setup` | 只有 Partner | 读写判断规则与 `files`、`schedule` 两个事件源的配置块 | 已实现 |
+| `partner_report` | 两个 Worker preset | Worker 报状态和摘要 | 已实现，按状态推给 Partner |
+| `partner_decide` | Secretary | 把一个事件的判断写回表 | 已实现 |
+| `partner_patrol` | Secretary | 定时任务到点时记录一次巡查 | 已实现 |
+| `partner_read_conversation` | Secretary | 只读地读当前 Partner 对话最近的几条消息 | 已实现 |
 
-附录入按工作单元的队列投递：Worker 空闲时开新一轮，运行中排到下一轮。Partner 按工作单元 id 引用，不记 Worker 会话 id。
+附录入按工作单元的队列投递：Worker 用 `followup` 收下一条输入，空闲时开新一轮，运行中排到下一轮。Partner 按工作单元 id 引用，不记 Worker 会话 id。
 
-**现状**：只有 `partner_dispatch` 已实现。Worker 目前只收到一条消息，追加、中止、查询都没有。
+**现状**：九个工具都已实现。Worker 会话 id 与工作目录都由工作单元 id 派生（`superagent-wish-<工作单元 id>`），会话被外部删除时下次投递按同一个 id 重建。回报以 `agent-message` 推给 Partner，`ready`、`blocked`、`failed` 和提问推，`progress` 与 `dropped` 不推，一轮没有回报时补一条 `waiting`。
 
 **多任务体系**：Ticket / Input / Assignment / Mandate 这一档已经确定要做，方案见 `../design/working-unit.md`。这些模型不属于团队场景：个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
 
@@ -152,7 +157,7 @@ Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，�
 | Ticket / Mandate / Assignment / Subscription | 做，对应工作单元、输入、派工、授权四张表。订阅简化为“工作单元挂在哪条对话上” |
 | `orchestrator_*` 领域工具 | 换成 `partner_*` 工具，名字和参数按个人对话重定 |
 | 会话创建、工具白名单、消息投递 | 复用同一组 DSH Host 服务 |
-| 两个 preset（router / worker） | 四个 preset（`superagent-wish-partner` / `superagent-wish-secretary` / `superagent-wish-discoverer` / `superagent-wish-implementer`） |
+| 两个 preset（router / worker） | 五个 preset（`superagent-wish-sources` / `superagent-wish-partner` / `superagent-wish-secretary` / `superagent-wish-discoverer` / `superagent-wish-implementer`） |
 | 回报以 `steer` 送进主 Session，无报告时补 `waiting` | 同法复用 |
 
 原型的 Ticket / Input / Assignment / Mandate 不是团队专用。个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
@@ -161,13 +166,12 @@ Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，�
 
 ### 现在缺什么
 
+本轮的六个工作单元已全部实现。以下机制有意留到以后做：
+
 | 缺的东西 | 现在的结果 |
 |---|---|
-| 工作单元 | 没有这个对象，派发结果里只有一个 `sessionId` |
-| 输入队列 | Worker 只收一条消息；追加消息要重派一个 Worker |
-| 派工记录 | 叫停、重试、恢复都没有落点 |
-| 授权 | 越界判断只靠 Worker 自报和 Partner 核查，无运行时拦截 |
-| `partner_followup`、`partner_stop`、`partner_list` | 文档描述了前两个，代码里一个都没有 |
+| 授权拦截 | 越界判断只靠 Worker 自报和 Partner 复核，无运行时拦截 |
+| 按规则归属重新校验 | 策略版本是整份规则与事件源配置的哈希，任何规则变化都会让旧授权复核不通过 |
 
 ---
 

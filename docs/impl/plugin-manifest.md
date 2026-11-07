@@ -6,14 +6,28 @@
 |---|---|---|
 | `agentPresets` | 注册 Partner、Secretary、启发者、执行者四个 preset | 已验证（`register(definition)`） |
 | `systemPrompt` | 向 Partner 注入协作模式行为规则 | 已验证（`section({ name, order, text })`） |
-| `workspaceRegistry` | 给每个 Worker 建独立工作目录 | 已验证（`create(cwd)`） |
-| `sessionController` | 起 Worker 会话、取名、取回会话 | 已验证（`create` / `rename` / `resolveAgent`） |
-| `permissionPresets` | 设 Worker 会话权限 | 已验证（`set(session, 'danger-full-access')`） |
-| `agents` | 取 live Agent，调 `followup` / `steer` / `inject` 送任务 | 已验证（`get(id)`）；`followup` 等方法在 `Agent` 上 |
+| `storageDomain` | 工作单元、输入、派工、授权四张表；策略记录 | 已接入（`open(spec)`；域 `working_units` 表 `working_units` / `inputs` / `assignments` / `mandates`；域 `superagent_wish_policy` 表 `policy`） |
+| `workspaceRegistry` | 给每个工作单元建独立工作目录 | 已接入（`create(cwd)`，目录先 `mkdir`） |
+| `sessionController` | 起 Worker 会话、取名、取回会话、指定模型 | 已接入（`create` / `rename` / `resolveAgent` / `selectModel`） |
+| `permissionPresets` | 设 Worker 会话权限 | 已接入（`set(session, 'danger-full-access')`） |
+| `agents` | 取 live Agent，叫停当前派工 | 已接入（`get(id)`，再调 `agent.cancel({ kind: 'user' }, { keepInbox: true })`） |
+| `workingDirectory` | 取 Partner 会话自己的工作目录，作为工作单元目录的基准 | 已接入（`get(session)`，缺少时退回 `defaultDirectory`） |
 
 验证依据：`/Applications/DeepSeek Harness.app/Contents/Resources/app.asar` 的类型声明。
 
-当前实现只用到前两项。其余四项在派发链路实现时接入，技术方案见 `superagent-impl.md`。
+`sessionController.create` 收的是 `workspaceId`（工作区 id），`workspaceRegistry.create(path)` 返回它。
+
+## 插件配置
+
+`apply(ctx, config)` 读 `implementerSlots`：同时跑几个执行者，默认 2，取值 1–16，越界回落默认值。
+启发者不占槽位；wish 的追问不等槽位。同一个目录同一时刻只跑一个执行者。
+在 bundle patch 里设置：
+
+```yaml
+- name: @wish2333/dsh-superagent-wish
+  config:
+    implementerSlots: 3
+```
 Secretary 另需 `agent/created` 事件（判断是否 Partner 的新会话）。
 
 ---

@@ -6,3 +6,6 @@
       name: "@wish2333/dsh-superagent-wish"
       config:
         role: manager
+        # How many implementers run at once; a discoverer never takes a slot and
+        # a wish follow-up never waits for one. Default 2, range 1–16.
+        implementerSlots: 2
