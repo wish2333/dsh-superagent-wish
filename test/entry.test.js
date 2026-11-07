@@ -1,41 +1,53 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost } from './host-fake.js'
-import { apply, inject } from '../index.js'
+import { apply, PRESETS } from '../index.js'
 
-test('declares the Host services it needs to load', () => {
-  assert.deepEqual(inject, ['agentPresets', 'systemPrompt'])
-})
-
-test('the manager role registers the Partner preset', async () => {
+test('the manager registers the three presets and nothing model-facing', async () => {
   const host = createHost()
-  apply(host.ctx, { role: 'manager' })
+  apply(host.ctx)
   await Promise.resolve()
-
-  const [registration] = host.callsTo('agentPresets.register')
-  assert.ok(registration, 'expected agentPresets.register to be called')
-  assert.equal(registration.args.id, 'superagent-wish-recruiter')
-  assert.equal(registration.args.name, 'Partner')
+  await Promise.resolve()
+  assert.equal(host.callsTo('agentPresets.register').length, 3)
+  assert.equal(host.callsTo('systemPrompt.section').length, 0)
+  assert.equal(host.callsTo('tools.register').length, 0)
 })
 
-test('the instructions role adds the Partner prompt section', () => {
+test('every preset row names a subpath this package exports', async () => {
+  const { default: manifest } = await import('../package.json', { with: { type: 'json' } })
+  for (const preset of PRESETS) {
+    const specifier = `@wish2333/dsh-superagent-wish/${preset.subpath}`
+    const subpath = `./${preset.subpath}`
+    assert.ok(manifest.exports[subpath], `${specifier} is exported`)
+    assert.ok(manifest.files.includes(manifest.exports[subpath].slice(2)), `${specifier} ships`)
+  }
+})
+
+test('the Partner submodule adds the prompt section and the dispatch tool', async () => {
+  const { apply: mount } = await import('../partner.js')
   const host = createHost()
-  apply(host.ctx, { role: 'instructions' })
+  mount(host.ctx)
 
   const [section] = host.callsTo('systemPrompt.section')
-  assert.ok(section, 'expected systemPrompt.section to be called')
   assert.equal(section.args.name, 'superagent-wish-role')
   assert.match(section.args.text, /Partner/)
+
+  const [registration] = host.callsTo('tools.register')
+  assert.equal(registration.args.definition.name, 'partner_dispatch')
 })
 
-test('the instructions role registers no preset and the manager role adds no prompt section', async () => {
-  const host = createHost()
-  apply(host.ctx, { role: 'instructions' })
-  await Promise.resolve()
-  assert.equal(host.callsTo('agentPresets.register').length, 0)
+test('a worker submodule adds its prompt section and the report tool only', async () => {
+  for (const [path, name] of [
+    ['../worker-discoverer.js', 'superagent-wish-discoverer'],
+    ['../worker-implementer.js', 'superagent-wish-implementer'],
+  ]) {
+    const { apply: mount } = await import(path)
+    const host = createHost()
+    mount(host.ctx)
 
-  const other = createHost()
-  apply(other.ctx, { role: 'manager' })
-  await Promise.resolve()
-  assert.equal(other.callsTo('systemPrompt.section').length, 0)
+    const [section] = host.callsTo('systemPrompt.section')
+    assert.equal(section.args.name, name)
+    const [registration] = host.callsTo('tools.register')
+    assert.equal(registration.args.definition.name, 'partner_report')
+  }
 })
