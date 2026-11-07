@@ -81,14 +81,14 @@ test('a unit waiting for wish shows how long it has waited and the report it wai
   }
 })
 
-test('an ended unit shows how long ago it ended', async () => {
+test('an ended unit shows how long ago it ended when it is asked for', async () => {
   const host = await partner()
   let restore = () => {}
   try {
     const unitId = textOf(await call(host, 'partner_dispatch', { ...DISPATCH, type: 'discoverer' }))
     await call(host, 'partner_report', { state: 'ready', summary: 'Wrote three options.' }, `superagent-wish-${unitId}`)
     restore = clockAt(new Date(Date.now() + 26 * 3600_000).toISOString())
-    const text = textOf(await call(host, 'partner_list', {}))
+    const text = textOf(await call(host, 'partner_list', { includeEnded: true }))
     assert.match(text, /, ended \(1d 2h ago\)/)
   } finally {
     restore()
@@ -110,15 +110,40 @@ test('partner_list leaves every unit as it was', async () => {
   }
 })
 
-test('includeEnded false hides the units that have ended', async () => {
+// User story 36: Partner's context holds what it needs. Ended units are read
+// only when asked for, so a long life does not grow the list on every call.
+test('partner_list leaves the ended units out unless they are asked for', async () => {
   const host = await partner()
   try {
     const done = textOf(await call(host, 'partner_dispatch', { ...DISPATCH, type: 'discoverer' }))
     await call(host, 'partner_report', { state: 'ready', summary: 'Wrote three options.' }, `superagent-wish-${done}`)
     const open = textOf(await call(host, 'partner_dispatch', DISPATCH))
-    const text = textOf(await call(host, 'partner_list', { includeEnded: false }))
-    assert.ok(text.includes(open))
-    assert.ok(!text.includes(done))
+
+    const listed = textOf(await call(host, 'partner_list', {}))
+    assert.ok(listed.includes(open), 'open work is always listed')
+    assert.ok(!listed.includes(done), 'an ended unit is not listed by default')
+
+    const asked = textOf(await call(host, 'partner_list', { includeEnded: true }))
+    assert.ok(asked.includes(open))
+    assert.ok(asked.includes(done), 'includeEnded true brings the ended units back')
+    assert.match(asked, /, ended \(0m ago\)/)
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('the ended units are not read by default, and no unit is changed either way', async () => {
+  const host = await partner()
+  try {
+    const done = textOf(await call(host, 'partner_dispatch', { ...DISPATCH, type: 'discoverer' }))
+    await call(host, 'partner_report', { state: 'ready', summary: 'Wrote three options.' }, `superagent-wish-${done}`)
+    const before = JSON.stringify(mediumOf(host).snapshot())
+    await call(host, 'partner_list', {})
+    await call(host, 'partner_list', { includeEnded: true })
+    assert.equal(JSON.stringify(mediumOf(host).snapshot()), before)
+    const description = host.callsTo('tools.register').find((call) => call.args.definition.name === 'partner_list').args.definition.description
+    assert.doesNotMatch(description, /Ended units are listed too/)
+    assert.match(description, /Ended units are left out unless/)
   } finally {
     await host.cleanup()
   }

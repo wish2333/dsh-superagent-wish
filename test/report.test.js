@@ -61,7 +61,7 @@ async function oneUnit(fake, type = 'implementer') {
 /** The `partner_list` record for `unitId`. */
 async function listed(fake, unitId) {
   const registration = fake.callsTo('tools.register').find((call) => call.args.definition.name === 'partner_list')
-  const result = await registration.args.definition.execute({}, { agent: { id: PARTNER }, callId: 'call-1', signal: undefined })
+  const result = await registration.args.definition.execute({ includeEnded: true }, { agent: { id: PARTNER }, callId: 'call-1', signal: undefined })
   return result.record.units.find((unit) => unit.id === unitId)
 }
 

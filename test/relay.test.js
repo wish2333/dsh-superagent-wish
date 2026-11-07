@@ -90,9 +90,9 @@ async function oneUnit(fake, type = 'implementer') {
   return textOf(await call(fake, 'partner_dispatch', { type, title: 'Write the storage layer', body: 'Implement the tables under src/.' }))
 }
 
-/** The `partner_list` record for `unitId`. */
-async function listed(fake, unitId) {
-  const result = await call(fake, 'partner_list', {})
+/** The `partner_list` record for `unitId`; ended units are asked for by name. */
+async function listed(fake, unitId, { includeEnded = true } = {}) {
+  const result = await call(fake, 'partner_list', { includeEnded })
   return result.record.units.find((unit) => unit.id === unitId)
 }
 

@@ -177,7 +177,7 @@ export const LIST_TOOL = {
     'Each unit reports its name, type, state, and how long it has been in that state.',
     `States: ${LIST_STATES}.`,
     'A unit is waiting for wish when its state is waiting-for-decision or waiting-for-input; the last report it sent is shown with it.',
-    'Ended units are listed too, so wish can see what was finished and when.',
+    'Ended units are left out unless includeEnded is true: the open work is what Partner needs, and a unit that has ended shows its result and when it ended when asked for.',
     'The dropped events are the files and patrols the Secretary judged and opened nothing for, newest first. Each shows when it was dropped, which source and file it was, and the reason as the Secretary gave it.',
     'A Secretary that judged wrongly is visible here: wish sets the rules with partner_setup and the next event is judged by the new ones.',
   ].join(' '),
@@ -187,7 +187,7 @@ export const LIST_TOOL = {
     properties: {
       includeEnded: {
         type: 'boolean',
-        description: 'Include the units that have ended. Defaults to true; pass false to see only the open work.',
+        description: 'Include the units that ended. Defaults to false, which lists only the open work.',
       },
       droppedLimit: {
         type: 'integer',
@@ -575,7 +575,7 @@ export function describeDropped(event, now = Date.now()) {
 
 /** `partner_list`: every unit with its state and the events the Secretary dropped, read-only. */
 export async function listUnits(store, args) {
-  const units = store.list().filter((unit) => args.includeEnded !== false || unit.state !== 'ended')
+  const units = store.list().filter((unit) => args.includeEnded === true || unit.state !== 'ended')
   const now = Date.now()
   const lines = units.map((unit) => describeUnit(unit, now))
   const summary = lines.length ? lines.map((line) => `${line.id} ${quoted(line.name)} — ${line.type}, ${line.state} (${line.since})${line.lastReport ? `: ${line.lastReport.state} — ${line.lastReport.summary}` : ''}`).join('\n')
