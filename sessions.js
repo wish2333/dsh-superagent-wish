@@ -59,6 +59,19 @@ function userMessage(text) {
   }
 }
 
+/**
+ * A tool result: one text block, which `output.render` hands the model as it is.
+ * Every tool in the plugin ends with this shape, success or refusal.
+ * @param text what the model reads
+ * @param record the facts the call established, for the caller that reads them
+ */
+export function textResult(text, record) {
+  return { content: [{ type: 'text', text }], ...(record === undefined ? {} : { record }) }
+}
+
+/** One readable line for a failure, the text of a refused call. */
+export const refuse = (reason) => textResult(String(reason).replace(/\s+/g, ' ').trim())
+
 /** One readable sentence for a failure, on the same line as the Host's own words. */
 export function describe(error) {
   const message = error instanceof Error ? error.message : String(error)

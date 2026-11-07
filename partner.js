@@ -17,7 +17,7 @@ import { openPump, slotsFor } from './pump.js'
 import { nextToStart, slotsFrom } from './queue.js'
 import { turnEnded } from './relay.js'
 import { sharedStore } from './working-units.js'
-import { deliver, describe, ensureWorker, selectModel, stop, unitDirectory, WORKER_TYPES, workerSessionId } from './sessions.js'
+import { deliver, describe, ensureWorker, refuse, selectModel, stop, textResult, unitDirectory, WORKER_TYPES, workerSessionId } from './sessions.js'
 
 export const inject = ['systemPrompt', 'tools', 'storageDomain']
 
@@ -28,19 +28,6 @@ export const WORKER_SERVICES = ['sessionController', 'workspaceRegistry', 'permi
 export const STORE_SERVICES = ['storageDomain']
 
 const quoted = (value) => JSON.stringify(value)
-
-/**
- * A tool result: the sentence the model reads, and the record it describes.
- * `output.render` above turns exactly those content blocks into the result.
- */
-function textResult(text, record) {
-  return { content: [{ type: 'text', text }], ...(record === undefined ? {} : { record }) }
-}
-
-/** One readable sentence for a refusal; the tool reports it as the result text. */
-function refused(reason) {
-  return { content: [{ type: 'text', text: reason.replace(/\s+/g, ' ').trim() }] }
-}
 
 /**
  * The `output` block DSH requires of every registration: the record's schema,
@@ -269,7 +256,7 @@ function guarded(body) {
     try {
       return await body(args ?? {}, exec)
     } catch (error) {
-      return refused(describe(error))
+      return refuse(describe(error))
     }
   }
 }
@@ -288,19 +275,19 @@ export async function dispatch(ctx, store, policy, slots, args, exec, options = 
   const origin = options.origin ?? 'wish'
   const session = exec?.agent?.id
   if (!session) {
-    return refused('Dispatch refused: this call carries no calling session, so a Worker would have no one to report to.')
+    return refuse('Dispatch refused: this call carries no calling session, so a Worker would have no one to report to.')
   }
   const type = String(args.type ?? '')
   if (!WORKER_TYPES.includes(type)) {
-    return refused(`Dispatch refused: unknown worker type "${type}". Use ${WORKER_TYPES.join(' or ')}.`)
+    return refuse(`Dispatch refused: unknown worker type "${type}". Use ${WORKER_TYPES.join(' or ')}.`)
   }
   const title = String(args.title ?? '').trim()
   const body = String(args.body ?? '').trim()
-  if (!title) return refused('Dispatch refused: a working unit needs a title.')
-  if (!body) return refused('Dispatch refused: a working unit needs its first input.')
+  if (!title) return refuse('Dispatch refused: a working unit needs a title.')
+  if (!body) return refuse('Dispatch refused: a working unit needs its first input.')
 
   const serviceMissing = WORKER_SERVICES.find((name) => !ctx[name])
-  if (serviceMissing) return refused(`Dispatch refused: the Host provides no ${serviceMissing} service, so no Worker session can be opened.`)
+  if (serviceMissing) return refuse(`Dispatch refused: the Host provides no ${serviceMissing} service, so no Worker session can be opened.`)
 
   const id = store.nextId()
   const unit = {
@@ -320,7 +307,7 @@ export async function dispatch(ctx, store, policy, slots, args, exec, options = 
     model = { provider: String(args.model.provider ?? ''), model: String(args.model.model ?? '') }
     if (args.model.reasoningEffort) model.reasoningEffort = String(args.model.reasoningEffort)
     if (typeof ctx.sessionController.selectModel !== 'function') {
-      return refused('Dispatch refused: this Host cannot select a model, so omit model and use the session default.')
+      return refuse('Dispatch refused: this Host cannot select a model, so omit model and use the session default.')
     }
   }
 
@@ -412,14 +399,14 @@ async function startNow(ctx, store, unit, { session }) {
 export async function followup(ctx, store, policy, args, exec) {
   const unitId = String(args.unitId ?? '').trim()
   const text = String(args.text ?? '').trim()
-  if (!text) return refused('Follow-up refused: there is no text to send.')
+  if (!text) return refuse('Follow-up refused: there is no text to send.')
   const unit = store.get(unitId)
-  if (!unit) return refused(`Follow-up refused: there is no working unit ${unitId}.`)
+  if (!unit) return refuse(`Follow-up refused: there is no working unit ${unitId}.`)
   if (unit.state === 'ended') {
     if (!policy.revalidate(unit.mandate)) {
-      return refused(`Follow-up refused: working unit ${unitId} ended, and the policy no longer holds its mandate, so it stays ended. Start a new working unit for this work.`)
+      return refuse(`Follow-up refused: working unit ${unitId} ended, and the policy no longer holds its mandate, so it stays ended. Start a new working unit for this work.`)
     }
-    return refused(`Follow-up refused: working unit ${unitId} has ended. Start a new working unit for new work.`)
+    return refuse(`Follow-up refused: working unit ${unitId} has ended. Start a new working unit for new work.`)
   }
 
   // Input on a unit that was waiting reopens it: the tables move it to running
@@ -438,8 +425,8 @@ export async function followup(ctx, store, policy, args, exec) {
 async function stopUnit(ctx, store, slots, args) {
   const unitId = String(args.unitId ?? '').trim()
   const unit = store.get(unitId)
-  if (!unit) return refused(`Stop refused: there is no working unit ${unitId}.`)
-  if (unit.state === 'ended') return refused(`Stop refused: working unit ${unitId} has already ended.`)
+  if (!unit) return refuse(`Stop refused: there is no working unit ${unitId}.`)
+  if (unit.state === 'ended') return refuse(`Stop refused: working unit ${unitId} has already ended.`)
   const cancelled = stop(ctx, unit)
   await store.stop(unitId, args.reason ? String(args.reason) : 'stopped by wish')
   // The stop ended the assignment, so it gave a slot back: a queued unit starts.

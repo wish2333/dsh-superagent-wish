@@ -131,6 +131,18 @@ test('a missing storage domain leaves partner_report absent rather than failing 
   }
 })
 
+// Every tool result is text content blocks, the shape `output.render` reads, and
+// one helper builds it for every tool in the plugin.
+test('a tool result is one text block, however the tool ends', async () => {
+  const host = createHost({ storageDomain: createStorageDomain(), services: ['systemPrompt', 'tools', 'agents', 'workspaceRegistry', 'sessionController', 'permissionPresets', 'workingDirectory'] })
+  implementer.apply(host.ctx)
+  const definition = host.callsTo('tools.register').map((call) => call.args.definition).find((item) => item.name === 'partner_report')
+  // A successful report and a refused one: the same shape, the same block type.
+  const refused = await definition.execute({ state: 'nonsense', summary: 'x' }, { agent: { id: 'someone' }, callId: 'c', signal: undefined })
+  assert.deepEqual(refused, { content: [{ type: 'text', text: 'someone is not the worker of any working unit.' }] })
+  assert.deepEqual(definition.output.render({}, refused), refused.content)
+})
+
 // The Partner preset's surface is its five tools and its prompt; a helper kept
 // exported for a test is a second interface nothing else keeps working.
 test('the Partner preset exports its five tool definitions and nothing else that is callable per unit', async () => {

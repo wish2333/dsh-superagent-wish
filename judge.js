@@ -19,6 +19,7 @@ import { agentMessage } from './relay.js'
 import { sharedPolicy } from './policy.js'
 import { openPump, slotsFor } from './pump.js'
 import { slotsFrom } from './queue.js'
+import { refuse, textResult } from './sessions.js'
 import { WORKER_TYPES } from './sessions.js'
 import { sharedStore } from './working-units.js'
 
@@ -187,10 +188,10 @@ export function decision(tables, record, args) {
 }
 
 /** The sentence the Secretary reads for one decision, and the row it was written to. */
-function decided(decision_, event) {
-  return { content: [{ type: 'text', text: decision_.decision === 'drop'
-    ? `Event ${event.id} dropped: ${decision_.reason}`
-    : `Event ${event.id} opened ${decision_.unitId}.` }] }
+function decided(decision, row) {
+  return textResult(decision.decision === 'drop'
+    ? `Event ${row.id} dropped: ${decision.reason}`
+    : `Event ${row.id} opened ${decision.unitId}.`, { event: row.id, decision: decision.decision, ...(decision.unitId ? { unitId: decision.unitId } : {}) })
 }
 
 /**
@@ -210,10 +211,10 @@ function decided(decision_, event) {
  */
 export async function decide(ctx, store, policy, args, exec) {
   const checked = decision(store, policy, args)
-  if (checked.refused) return { content: [{ type: 'text', text: checked.refused }] }
+  if (checked.refused) return refuse(checked.refused)
   const { event } = checked
   const principal = principalOf(exec) ?? event.principal
-  if (!principal) return { content: [{ type: 'text', text: `Decide refused: event ${event.id} names no conversation to run the unit under.` }] }
+  if (!principal) return refuse(`Decide refused: event ${event.id} names no conversation to run the unit under.`)
   if (checked.decision.decision === 'drop') {
     const row = await store.judgeEvent(event.id, { status: 'dropped', reason: checked.decision.reason, principal })
     return decided({ decision: 'drop', reason: checked.decision.reason }, row)
@@ -224,7 +225,7 @@ export async function decide(ctx, store, policy, args, exec) {
   const result = await dispatch(ctx, store, policy, slots, { type, title, body }, exec_, { origin: event.id })
   const text = result.content?.[0]?.text ?? ''
   const unitId = /^(unit-\d+)/.exec(text)?.[1]
-  if (!unitId) return { content: [{ type: 'text', text: `The unit was not opened, so the event stays waiting. ${text}` }] }
+  if (!unitId) return refuse(`The unit was not opened, so the event stays waiting. ${text}`)
   const row = await store.judgeEvent(event.id, { status: 'opened', unitId, principal })
   await advance(ctx, () => openPump(ctx, store, () => slots))
   return decided({ decision: 'open', unitId }, row)

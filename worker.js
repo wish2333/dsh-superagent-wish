@@ -1,6 +1,6 @@
 import { advance } from './advance.js'
 import { noted, relayReport } from './relay.js'
-import { WORKER_SESSION } from './sessions.js'
+import { describe, refuse, textResult, WORKER_SESSION } from './sessions.js'
 import { sharedStore } from './working-units.js'
 
 /**
@@ -79,18 +79,18 @@ export async function record(ctx, store, sessionId, args, partner) {
   const match = WORKER_SESSION.exec(String(sessionId ?? ''))
   const unit = match ? store.get(match[1]) : undefined
   if (!unit) {
-    return refused(`${sessionId ?? 'this session'} is not the worker of any working unit.`)
+    return refuse(`${sessionId ?? 'this session'} is not the worker of any working unit.`)
   }
   if (unit.workerSessionId !== sessionId) {
-    return refused(`${unit.id} runs in a different worker session, so its report does not count.`)
+    return refuse(`${unit.id} runs in a different worker session, so its report does not count.`)
   }
   if (unit.state === 'ended') {
-    return refused(`${unit.id} has ended; nothing more can be reported on it.`)
+    return refuse(`${unit.id} has ended; nothing more can be reported on it.`)
   }
   const state = String(args.state ?? '')
   const summary = String(args.summary ?? '').trim()
-  if (!(state in REPORT_STATES)) return refused(`Unknown report state "${state}". Use ${Object.keys(REPORT_STATES).join(', ')}.`)
-  if (!summary) return refused('A report needs a summary that says what was done or what the work waits on.')
+  if (!(state in REPORT_STATES)) return refuse(`Unknown report state "${state}". Use ${Object.keys(REPORT_STATES).join(', ')}.`)
+  if (!summary) return refuse('A report needs a summary that says what was done or what the work waits on.')
 
   const question = String(args.question ?? '').trim() || undefined
   const updated = await store.report(unit.id, { state, summary, source: sessionId })
@@ -105,18 +105,7 @@ export async function record(ctx, store, sessionId, args, partner) {
   } catch (error) {
     ctx.logger?.warn?.(`superagent-wish: ${unit.id}: the report did not reach Partner: ${String(error)}`)
   }
-  return {
-    content: [{
-      type: 'text',
-      text: `Recorded ${state} on ${unit.id}. The unit is now ${updated.state}.`,
-    }],
-    record: { unitId: unit.id, state, unitState: updated.state },
-  }
-}
-
-/** One readable sentence for a refusal; the tool reports it as the result text. */
-function refused(text) {
-  return { content: [{ type: 'text', text }] }
+  return textResult(`Recorded ${state} on ${unit.id}. The unit is now ${updated.state}.`, { unitId: unit.id, state, unitState: updated.state })
 }
 
 /**
@@ -145,7 +134,7 @@ export function mountWorker(ctx, section) {
           return result
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          return refused(message.replace(/\s+/g, ' ').trim().replace(/\.$/, ''))
+          return refuse(describe(error))
         }
       },
     })))

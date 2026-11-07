@@ -16,6 +16,7 @@
 
 import { decide, DECIDE_TOOL, principalOf } from './judge.js'
 import { sharedPolicy } from './policy.js'
+import { refuse, textResult } from './sessions.js'
 import { recordPatrol } from './sources.js'
 import { sharedStore } from './working-units.js'
 
@@ -140,11 +141,11 @@ function conversationText(partnerId, read) {
  */
 export async function readConversation(ctx, args, exec) {
   const partnerId = principalOf(exec)
-  if (!partnerId) return { content: [{ type: 'text', text: 'Read refused: this call is not the secretary of any Partner conversation.' }] }
+  if (!partnerId) return refuse('Read refused: this call is not the secretary of any Partner conversation.')
   const wanted = Number.isInteger(args.limit) && args.limit > 0 ? args.limit : 20
   const limit = Math.min(wanted, READ_LIMIT)
   const read = await recentMessages(ctx.sessionController, partnerId, limit)
-  return { content: [{ type: 'text', text: conversationText(partnerId, read) }] }
+  return textResult(conversationText(partnerId, read))
 }
 
 /** Preset id of the Partner, whose new sessions get a Secretary. */
@@ -341,7 +342,7 @@ export async function patrol(ctx) {
   const text = recorded
     ? `Patrol recorded at ${recorded.at}. ${recorded.text}`
     : 'Patrol recorded: nothing changed since the last one, so no new row was written.'
-  return { content: [{ type: 'text', text }] }
+  return textResult(text)
 }
 
 export function apply(ctx) {
@@ -365,7 +366,7 @@ export function apply(ctx) {
               const [store, policy] = await Promise.all([sharedStore(workerCtx), sharedPolicy(workerCtx)])
               return await decide(workerCtx, store, policy, args ?? {}, exec)
             } catch (error) {
-              return { content: [{ type: 'text', text: String(error?.message ?? error) }] }
+              return refuse(String(error?.message ?? error))
             }
           },
         }))
