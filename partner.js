@@ -42,7 +42,10 @@ export function bindReportChannel(ctx) {
   const channel = createReportChannel({
     getPartnerAgent: (sessionId) => (ctx.agents && sessionId ? ctx.agents.get(sessionId) : undefined),
   })
-  ctx.effect(() => ctx.on('agent/status', (payload) => channel.onStatus(payload)))
+  // Worker sessions run in their own preset scopes. A scope-local listener sees
+  // only this session's events, so the fallback would never fire; DSH marks
+  // cross-scope listeners with `global`.
+  ctx.effect(() => ctx.on('agent/status', (payload) => channel.onStatus(payload), { global: true }))
   return channel
 }
 

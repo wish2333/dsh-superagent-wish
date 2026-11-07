@@ -94,3 +94,15 @@ test('a missing Host service leaves the tool absent instead of failing the prese
   // The prompt section still mounts: a missing worker service must not break Partner.
   assert.equal(host.callsTo('systemPrompt.section').length, 1)
 })
+
+// A worker runs in its own preset scope. A scope-local listener never sees its
+// agent/status, so the missing-report fallback would silently never fire.
+test('the agent status listener asks for cross-scope delivery', async () => {
+  const { apply: mount } = await import('../partner.js')
+  const host = createHost()
+  mount(host.ctx)
+
+  const listener = host.callsTo('on').find((call) => call.args.name === 'agent/status')
+  assert.ok(listener, 'subscribes to agent/status')
+  assert.equal(listener.args.options?.global, true)
+})

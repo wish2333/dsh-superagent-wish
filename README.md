@@ -64,7 +64,15 @@ After installation, select the **Partner** preset when starting a new session.
 
 ## Status
 
-All three presets are registered, each from its own submodule (ADR-0002). Partner carries `partner_dispatch`; both workers carry `partner_report`. A report is relayed into the Partner session with `steer`; `progress` does not wake Partner, and a worker turning idle without a final report produces a `waiting` report. `npm test` covers the Host boundary and the relay.
+All three presets are registered and load without a diagnostic; each is mounted from its own submodule (ADR-0002) with its tool plugins listed as preset rows (ADR-0003). A dispatch creates a worker session and delivers its first message; two real dispatches have run end to end.
+
+Known gaps:
+
+- `partner_followup` is documented but not implemented, so a worker currently gets one message. See `docs/impl/superagent-impl.md` §3b.
+- Reports are relayed with a `user` source, so they read as wish's own words. They should carry `agent-message`.
+- No input queue, claim, or mandate: one Partner names one worker. The cost table is in `docs/impl/superagent-impl.md` §6.
+
+`npm test` covers the Host boundary, the dispatch chain, and the relay.
 
 ## License
 

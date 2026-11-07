@@ -114,6 +114,25 @@ Worker 是独立 DSH 会话，不是子代理。模型不指定，用会话默�
 
 ---
 
+## 四之二、追加消息
+
+Worker 可以来回多轮，不必每次重派。
+
+| 目的 | 用什么 |
+|---|---|
+| 新任务，需要独立上下文 | `partner_dispatch`，新建 Worker 会话 |
+| 同一任务继续，补要求或回问 | `partner_followup`，向已有会话追加消息 |
+
+追加消息用 `followup` 投递：Worker 空闲时开新一轮，运行中排到下一轮。Partner 需要自己记住 Worker 的 `sessionId`；派发结果里有。
+
+**追加消息的格式**：一句说明意图，再写要求。不需要重写 task spec 的 `goal` 和 `scope`，除非范围真的变了。
+
+```
+接着上次的 [任务标题]：[新要求或问题]
+```
+
+---
+
 ## 五、派发确认消息格式
 
 Partner 在派出 Worker 前发给你的确认消息。
@@ -126,7 +145,7 @@ Worker 类型：[启发者 / 执行者]
 同意吗？
 ```
 
-你确认后，Partner 才调 `partner_dispatch` 起 Worker 会话。
+你确认后，Partner 才调 `partner_dispatch` 起 Worker 会话。追加消息不需要重新确认，除非它改变了 task spec 的 `scope`。
 
 ---
 
@@ -137,7 +156,7 @@ Worker 类型：[启发者 / 执行者]
 | 启发者 | 提炼关键选项和盲点，整合进当前主题的需求模型，带回给你；原始输出不直接透传 |
 | 执行者 | 核查交付物是否符合 task spec；符合则汇报结果；有偏差则用偏差汇报格式（见 `../spec/interaction-spec.md`） |
 
-回报由 Worker 调 `partner_report` 提交，经队列以 `steer` 送进 Partner。送进 Partner 的正文形如：
+回报由 Worker 调 `partner_report` 提交，经队列以 `steer` 送进 Partner。回报不是用户消息，它的 source 是 `agent-message`，Partner 应按「某个 Worker 报了什么」来读。送进 Partner 的正文形如：
 
 ```
 Worker (discoverer session superagent-wish-discoverer-mac-3f2a1b7c) "Explore macOS" reported ready:

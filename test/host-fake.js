@@ -86,7 +86,10 @@ export function createHost(options = {}) {
       }
       callback(ctx)
     },
-    on(name, handler) {
+    on(name, handler, eventOptions) {
+      // A listener without `global` sees only its own scope; record the option so
+      // a test can assert the plugin asked for cross-scope delivery.
+      record('on', { name, options: eventOptions })
       const set = listeners.get(name) ?? new Set()
       set.add(handler)
       listeners.set(name, set)

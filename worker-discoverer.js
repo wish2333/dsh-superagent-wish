@@ -10,7 +10,7 @@ import { report } from './report.js'
 import { WORKER_RULES } from './worker-shared.js'
 import { REPORT_TOOL } from './tools.js'
 
-export const inject = ['systemPrompt', 'tools']
+export const inject = ['systemPrompt', 'tools', 'agents']
 
 /** The Host tool plugins a worker preset mounts; the two roles differ by this list. */
 export const DISCOVERER_TOOL_PLUGINS = [
