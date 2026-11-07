@@ -220,7 +220,12 @@ export async function decide(ctx, store, policy, args, exec) {
     return decisionResult({ decision: 'drop', reason: checked.decision.reason }, row)
   }
   const { type, title, body } = checked.decision
-  const exec_ = { agent: { id: principal, session: { id: principal } }, callId: undefined, signal: undefined }
+  // The unit's directory is derived from the conversation's own directory, so
+  // the dispatch is made as the live Partner Agent, not as a stand-in naming
+  // its id: a bare `{ id }` has no Session for `workingDirectory.get` to read.
+  const resolved = await ctx.sessionController.resolveAgent(principal)
+  if ('error' in resolved) return refuse(`Decide refused: the conversation ${principal} is not open, so its working directory cannot be read; the event stays waiting.`)
+  const exec_ = { agent: resolved.agent, callId: undefined, signal: undefined }
   const slots = slotsFor(ctx.storageDomain, slotsFrom(undefined))
   const result = await dispatch(ctx, store, policy, slots, { type, title, body }, exec_, { origin: event.id })
   const text = result.content?.[0]?.text ?? ''

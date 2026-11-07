@@ -116,13 +116,16 @@ export async function ensureWorker(ctx, unit, { session } = {}) {
   const { sessionController, workspaceRegistry } = host
 
   const sessionId = unit.workerSessionId ?? workerSessionId(unit.id)
+  // The tables always record the directory a unit used, because the Host's
+  // Workspace cannot be renamed; a unit missing one has never run. The directory
+  // is made on every delivery, not only when the Session is opened: it can be
+  // removed between turns, and a Worker whose Session already exists would
+  // otherwise run in a directory its tools cannot reach.
+  const directory = unit.directory ?? unitDirectory(ctx, session, unit.id)
+  await mkdir(directory, { recursive: true })
   let resolved = await sessionController.resolveAgent(sessionId)
   const opened = 'error' in resolved
   if (opened) {
-    // The tables always record the directory a unit used, because the Host's
-    // Workspace cannot be renamed; a unit missing one has never run.
-    const directory = unit.directory ?? unitDirectory(ctx, session, unit.id)
-    await mkdir(directory, { recursive: true })
     const workspace = await workspaceRegistry.create(directory)
     await sessionController.create({
       sessionId,

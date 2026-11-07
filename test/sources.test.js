@@ -63,6 +63,9 @@ async function plugin(options = {}) {
   host.setAgent(PARTNER, liveAgent(PARTNER))
   host.base = base
   host.medium = medium
+  // The Secretary's prompt section renders synchronously from rules read when
+  // it mounted; one microtask turn settles that first read.
+  host.settleRules = () => new Promise((resolve) => setTimeout(resolve, 20))
   host.cleanup = () => rm(base, { recursive: true, force: true })
   return host
 }
@@ -268,8 +271,12 @@ test('a disabled rule is left out of the Secretary\'s request', async () => {
 test('with no rule set the Secretary reads that no rule is set, and judges by nothing else', async () => {
   const host = await plugin()
   try {
+    // DSH renders a section synchronously and then scans the result for prompt
+    // variables, so `text` must return a string, never a promise.
+    await host.settleRules()
     const section = host.callsTo('systemPrompt.section').map((item) => item.args).find((args) => args.name === secretary.SECTION.name)
-    const text = await section.text({ agent: { id: SECRETARY_ID }, scope: undefined })
+    const text = section.text({ agent: { id: SECRETARY_ID }, scope: undefined })
+    assert.equal(typeof text, 'string', 'the section text is a string')
     assert.match(text, /no rule is set/i)
   } finally {
     await host.cleanup()
@@ -638,5 +645,39 @@ test('a judgement message is not pushed to Partner as a report: nothing reaches 
     assert.deepEqual([...host.ctx.agents.get(PARTNER).delivered], [])
   } finally {
     await host.cleanup()
+  }
+})
+
+test('the manager reads the watched directories on its own timer', async () => {
+  // The file source's poller starts from the plugin entry, not from the
+  // `sources` preset row: nothing ever selects that preset, so a poller
+  // started there would never run and a dropped file would never be seen.
+  // This host mounts the manager and the Partner row and nothing else, so the
+  // row is the only thing that could have read the directory.
+  const base = await mkdtemp(join(tmpdir(), 'superagent-wish-'))
+  const inbox = join(base, 'inbox')
+  await mkdir(inbox, { recursive: true })
+  const host = createHost({ storageDomain: createStorageDomain(), services: SERVICES, workingDirectory: base })
+  try {
+    openManager(host.ctx)
+    partnerModule.apply(host.ctx)
+    host.setAgent(PARTNER, liveAgent(PARTNER))
+    // Configure the file source in the policy the manager reads.
+    const { sharedPolicy } = await import('../policy.js')
+    const policy = await sharedPolicy(host.ctx)
+    await policy.setPolicy({
+      sources: { files: { enabled: true, config: { directories: [inbox], types: [{ match: '.md', defaultHandling: 'open', note: '' }] } } },
+    })
+    await writeFile(join(inbox, 'dropped.md'), 'read me')
+
+    // One poll period plus slack: the timer is the manager's, not the test's.
+    const { FILE_POLL_MS } = await import('../sources.js')
+    await new Promise((resolve) => setTimeout(resolve, FILE_POLL_MS + 400))
+    const { sharedStore } = await import('../working-units.js')
+    const recorded = (await sharedStore(host.ctx)).events().map((event) => event.ref)
+    assert.ok(recorded.some((ref) => ref.endsWith('/dropped.md')), 'the file the poller read is a recorded event')
+  } finally {
+    host.dispose()
+    await rm(base, { recursive: true, force: true })
   }
 })

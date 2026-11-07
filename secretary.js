@@ -20,7 +20,7 @@ import { refuse, textResult } from './sessions.js'
 import { recordPatrol } from './sources.js'
 import { sharedStore } from './working-units.js'
 
-export const inject = ['systemPrompt', 'tools', 'agentPresets', 'sessionController']
+export const inject = ['systemPrompt', 'tools', 'storageDomain', 'sessionController']
 
 /**
  * The one tool the Secretary calls: a patrol.
@@ -263,31 +263,59 @@ export async function ensureSecretary(ctx, agent) {
 }
 
 /**
- * The prompt section of the Secretary: its role, then the rules as they stand
- * when the request is assembled.
+ * The rules section as each mounted scope last read it, keyed by the policy it
+ * came from. The prompt section is rendered synchronously on every request, so
+ * the rules are read when the scope mounts and again whenever the policy
+ * changes, never inside the render.
+ */
+const renderedRules = new WeakMap()
+
+/**
+ * The prompt section of the Secretary: its role, then the judging rules.
+ *
+ * The rules are read ahead rather than in the render: `systemPrompt.section`
+ * renders a section's `text` synchronously and then scans the result for prompt
+ * variables, so a function that returned a promise would put the promise
+ * itself into the prompt and fail the request.
  *
  * A rule that cannot be read is left out of the section rather than failing the
  * request; the Secretary then judges by the role alone and records that it had
  * no rule.
+ *
+ * @param ctx the Secretary context, which reads the policy
+ * @returns the section, whose `text` is a string from the first render on
  */
 export function sectionFor(ctx) {
+  const state = { rules: undefined }
+  renderedRules.set(ctx, state)
+  const read = async () => {
+    if (!ctx.storageDomain) {
+      state.rules = '\n\n## The judging rules\n\nThe rules could not be read on this Host, so open no working unit from an external event and record why.'
+      return
+    }
+    try {
+      state.rules = `\n\n${(await rulesNow(ctx)).section}`
+    } catch (error) {
+      ctx.logger?.warn?.(`secretary: the rules could not be read for this request: ${String(error)}`)
+      state.rules = ''
+    }
+  }
+  state.refresh = read
+  // The first read is awaited by `apply`, so the rules are there before the
+  // first request renders the section.
   return {
     ...SECTION,
-    text: async () => {
-      let rules
-      try {
-        // A Host without the policy's medium has no rules to read; it says so rather than failing the request.
-        if (!ctx.storageDomain) {
-          return `${SECTION.text}\n\n## The judging rules\n\nThe rules could not be read on this Host, so open no working unit from an external event and record why.`
-        }
-        rules = await rulesNow(ctx)
-      } catch (error) {
-        ctx.logger?.warn?.(`secretary: the rules could not be read for this request: ${String(error)}`)
-        return SECTION.text
-      }
-      return `${SECTION.text}\n\n${rules.section}`
-    },
+    text: () => `${SECTION.text}${state.rules ?? ''}`,
   }
+}
+
+/**
+ * Re-read the judging rules for a Secretary scope after the policy changed.
+ * @param ctx the context the section was mounted on
+ * @returns completion of the read, or nothing when no section is mounted on it
+ */
+export async function refreshRules(ctx) {
+  await renderedRules.get(ctx)?.refresh?.()
 }
 
 /**
@@ -343,6 +371,10 @@ export async function patrol(ctx) {
 
 export function apply(ctx) {
   const section = sectionFor(ctx)
+  // The section renders synchronously, so its first read is awaited here before
+  // the section is registered; a Host that cannot read the policy still gets
+  // the role section, which says so.
+  void renderedRules.get(ctx)?.refresh?.()
   ctx.effect(() => ctx.systemPrompt.section(section))
   // A Host without the tables records no patrol and no judgement; the tools are then absent rather than failing the preset.
   if (ctx.tools) {
@@ -378,11 +410,17 @@ export function apply(ctx) {
  * Secretary preset, so its own `apply` runs only once a Secretary session is
  * being created, and a listener there would never see the first Partner.
  *
- * The signal is `agent-preset/selected`, not `agent/created`. A Session is
- * created first and gets its preset afterwards — in the desktop app several
- * seconds later — so at creation neither the Session nor the Agent's
- * composition says which preset it will run. The selection event carries the
- * pair the judgement needs: the Session id and the preset it now runs.
+ * Two signals, because DSH creates a Session in two ways:
+ *
+ * - `agent-preset/selected` when the Session exists first and the preset is
+ *   picked afterwards, which is what the desktop app does;
+ * - `agent/created` with the preset already composed, which is what
+ *   `sessionController.create({ agentPreset })` does and what a Session resumes
+ *   as. The preset is read from the Agent's own composition there, because the
+ *   Session's record is written after this event.
+ *
+ * `ensureSecretary` is idempotent, so a Session that arrives by both signals
+ * still gets one Secretary.
  *
  * @param ctx the manager context, which provides `agents`, `agentPresets` and `sessionController`
  * @returns the listeners' disposer
@@ -393,12 +431,29 @@ export function watchPartnerSessions(ctx) {
     if (agent === undefined) return
     await ensureSecretary(ctx, agent)
   }
-  // A preset chosen before publication, as a Session created through the API
-  // does, still arrives here; a Session created without a selection never does,
-  // which is exactly the ordinary case.
-  const stopListening = ctx.on('agent-preset/selected', async (sessionId, agentPreset) => {
+  const stopSelected = ctx.on('agent-preset/selected', async (sessionId, agentPreset) => {
     if (agentPreset !== PARTNER_PRESET) return
     await start(sessionId)
   })
-  return stopListening
+  const stopCreated = ctx.on('agent/created', async ({ agent }) => {
+    if (composedPresetOf(ctx, agent) !== PARTNER_PRESET) return
+    await ensureSecretary(ctx, agent)
+  })
+  return () => {
+    stopSelected()
+    stopCreated()
+  }
+}
+
+/**
+ * The preset `agent` is composed with, read from the Agent rather than from the
+ * Session: at `agent/created` the Session has not recorded its selection yet.
+ * @returns the preset id, or `undefined` when the Host cannot say
+ */
+function composedPresetOf(ctx, agent) {
+  try {
+    return ctx.agentPresets.composedPreset?.(agent.ctx) ?? undefined
+  } catch {
+    return undefined
+  }
 }

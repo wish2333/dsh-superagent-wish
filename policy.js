@@ -211,6 +211,11 @@ export function holds(mandate, policy) {
  */
 export async function savePolicy(policy, store, ctx, blocks, session) {
   const { from, to, policy: saved } = await policy.setPolicy(blocks)
+  // Every mounted Secretary renders its prompt from a copy read when it mounted;
+  // the copy is re-read here, so a saved rule holds on the next request without
+  // a restart.
+  const { refreshRules } = await import('./secretary.js')
+  await refreshRules(ctx).catch(() => undefined)
   if (from === to) return { from, to, notified: [] }
   const notified = await store.policyChanged({ from, to, rules: saved.rules })
   // Each notice goes to the unit's worker in queue order; a unit whose worker

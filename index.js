@@ -198,6 +198,14 @@ export function apply(ctx, config) {
   // Cordis refuses a read of an injected name it has not provided. A Host
   // without a Schedule service reads no event and opens no task, so the
   // callback waits for one; a save says so where it would need it.
+  // The file source reads its directories on its own timer, the way the
+  // judgement loop polls. It starts here rather than from the `sources` preset's
+  // row: a preset's rows load only when that preset mounts, and nothing ever
+  // selects the sources preset, so a poller started there would never run and
+  // a file dropped into a watched directory would never be seen.
+  ctx.inject(['storageDomain', 'sessionController'], (filesCtx) => {
+    applySources(filesCtx)
+  })
   ctx.inject(['storageDomain', 'sessionController', 'schedule'], (scheduleCtx) => {
     applyJudge(scheduleCtx)
     applyScheduleFromPolicy(scheduleCtx)
