@@ -9,6 +9,7 @@
  * failing the preset.
  */
 
+import { turnEnded } from './relay.js'
 import { openWorkingUnits } from './working-units.js'
 import { deliver, describe, ensureWorker, selectModel, stop, unitDirectory, WORKER_TYPES, workerSessionId } from './sessions.js'
 
@@ -274,6 +275,9 @@ export async function dispatch(ctx, store, args, exec) {
   // The first input reaches the Worker only after its unit exists, so a report
   // cannot arrive before the unit it belongs to.
   await deliver(ctx, created, created.inputs.at(-1), exec.agent.session)
+  // The first input is on its way, so the assignment it runs is running, and
+  // the report or the turn end that answers it has a round to belong to.
+  await store.start(id)
   return textResult(id, describeUnit(created))
 }
 
@@ -298,6 +302,7 @@ export async function followup(ctx, store, args, exec) {
   const updated = await store.followup(unitId, { text, source: 'wish' })
   const input = updated.inputs.at(-1)
   await deliver(ctx, updated, input, exec?.agent?.session)
+  await store.start(unitId)
   return textResult(`Sent to ${unitId}. It now holds ${updated.undelivered.length} input${updated.undelivered.length === 1 ? '' : 's'} waiting for the Worker.`, describeUnit(updated))
 }
 
@@ -344,6 +349,24 @@ export function apply(ctx) {
       let opened
       const store = () => (opened ??= openWorkingUnits(storeCtx))
       storeCtx.effect(() => () => { opened?.then((handle) => handle.close()).catch(() => {}) })
+      // A Worker runs in its preset's own scope, so only a global listener sees
+      // its status change: the listener reads the unit the Session id names,
+      // and the turn's end is what its `whenIdle` promises.
+      storeCtx.on('agent/status', async ({ agent, status }) => {
+        if (status !== 'idle') return
+        // The real Agent still finishes closing its turn when the event lands;
+        // waiting on it is what makes the turn's own report the one counted.
+        const after = () => (typeof agent?.whenIdle === 'function' ? agent.whenIdle() : undefined)
+        // Yield once first: a turn writes its report at its own end, and the
+        // event must not read the unit before that write lands.
+        try {
+          await Promise.resolve()
+          await turnEnded(workerCtx, await store(), agent?.id, after)
+        } catch {
+          // The turn end is a best effort: its failure is logged by the relay,
+          // and a status listener that threw would starve the next one.
+        }
+      }, { global: true })
       const bodies = {
         partner_dispatch: guarded((args, exec) => store().then((handle) => dispatch(workerCtx, handle, args, exec))),
         partner_followup: guarded((args, exec) => store().then((handle) => followup(workerCtx, handle, args, exec))),

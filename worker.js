@@ -1,4 +1,5 @@
-import { relayReport } from './relay.js'
+import { noted, relayReport } from './relay.js'
+import { WORKER_SESSION } from './sessions.js'
 import { openWorkingUnits } from './working-units.js'
 
 /**
@@ -60,7 +61,7 @@ export const REPORT_TOOL = {
 }
 
 /** This Worker Session's working unit id, from `superagent-wish-<unit id>`. */
-export const UNIT_SESSION = /^superagent-wish-(unit-\d+)$/
+export const UNIT_SESSION = WORKER_SESSION
 
 /**
  * The record a report writes. The store applies it to the unit the same way it
@@ -74,7 +75,7 @@ export const UNIT_SESSION = /^superagent-wish-(unit-\d+)$/
  * @param partner the context that carries the report to Partner, which declares `sessionController`
  */
 export async function record(ctx, store, sessionId, args, partner) {
-  const match = UNIT_SESSION.exec(String(sessionId ?? ''))
+  const match = WORKER_SESSION.exec(String(sessionId ?? ''))
   const unit = match ? store.get(match[1]) : undefined
   if (!unit) {
     return refused(`${sessionId ?? 'this session'} is not the worker of any working unit.`)
@@ -95,8 +96,14 @@ export async function record(ctx, store, sessionId, args, partner) {
   // A report that should reach Partner is carried now, as the turn it belongs
   // to is still the Worker's; a failure to carry it leaves the record, which
   // Partner reads when it looks.
+  // A report settles the turn it was written in, so the fallback for a silent
+  // turn sees it and adds nothing.
+  const round = unit.assignments.at(-1)?.id
+  noted(store, updated, round)
   try {
-    await relayReport(partner, updated, { state, summary, question, source: sessionId }, { round: unit.assignments.at(-1)?.id })
+    // No repeat is expected from the tool call itself: its id already arrived
+    // once, and a retry of it is one report.
+    await relayReport(partner, updated, { state, summary, question, source: sessionId }, { round })
   } catch (error) {
     ctx.logger?.warn?.(`superagent-wish: ${unit.id}: the report did not reach Partner: ${String(error)}`)
   }
@@ -127,16 +134,18 @@ export function mountWorker(ctx, section) {
     let opened
     const store = () => (opened ??= openWorkingUnits(storeCtx))
     storeCtx.effect(() => () => { opened?.then((handle) => handle.close()).catch(() => {}) })
-    storeCtx.effect(() => ctx.tools.register({
+    // The relay reaches Partner through its Session, which the Worker preset
+    // declares: a Host without it records reports and carries none.
+    storeCtx.inject(['sessionController'], (reportCtx) => storeCtx.effect(() => ctx.tools.register({
       ...REPORT_TOOL,
       execute: async (args, exec) => {
         try {
-          return await record(storeCtx, await store(), exec?.agent?.id, args ?? {}, storeCtx)
+          return await record(storeCtx, await store(), exec?.agent?.id, args ?? {}, reportCtx)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           return refused(message.replace(/\s+/g, ' ').trim().replace(/\.$/, ''))
         }
       },
-    }))
+    })))
   })
 }

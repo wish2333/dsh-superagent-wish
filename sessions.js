@@ -29,6 +29,9 @@ export function workerSessionId(unitId) {
   return `superagent-wish-${unitId}`
 }
 
+/** The working unit id a Worker Session id names, or undefined for any other Session. */
+export const WORKER_SESSION = /^superagent-wish-(unit-\d+)$/
+
 /** The directory Partner creates under, taken from its own session and never from the profile directory. */
 export function baseDirectory(ctx, session) {
   try {

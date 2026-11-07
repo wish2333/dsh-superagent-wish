@@ -50,7 +50,8 @@ export class UnknownWorkingUnit extends Error {
  *
  * The caller owns the handle and closes it on unload: `ctx.effect` registers the
  * disposer here, and the store also exposes `close()` for a caller that unloads
- * before the effect runs.
+ * before the effect runs. A store opened after a close still answers, with the
+ * domain it opened — the closing destroys the medium, not the promise.
  *
  * @param ctx the plugin context; it must provide `storageDomain`
  * @returns the store
@@ -59,7 +60,7 @@ export async function openWorkingUnits(ctx) {
   const domain = await ctx.storageDomain.open(workingUnitDomain)
   let closed
   const close = () => (closed ??= Promise.resolve(domain.close()))
-  ctx.effect(() => () => close())
+  ctx.effect(() => () => { void close() })
 
   const units = domain.table('working_units')
   const inputs = domain.table('inputs')
@@ -79,23 +80,28 @@ export async function openWorkingUnits(ctx) {
     }
   }
 
-  /** The stored form of a unit: its own fields, and the ids of the rows it holds. */
-  const stored = (unit) => {
-    const { inputs, assignments, mandate, undelivered, ...own } = unit
-    return {
-      ...own,
-      inputs: inputs.map((input) => input.id),
-      undelivered: undelivered ?? [],
-      assignments: assignments.map((assignment) => assignment.id),
-      mandate: unit.id,
-    }
-  }
+  /**
+   * The stored form of a unit: its own fields, and the ids of the rows it holds.
+   * The unit's `mandate` is its authorization, so the row is named by the unit id.
+   */
+  const stored = ({ inputs, assignments, undelivered, ...own }) => ({
+    ...own,
+    inputs: inputs.map((input) => input.id),
+    undelivered: undelivered ?? [],
+    assignments: assignments.map((assignment) => assignment.id),
+    mandate: own.id,
+  })
 
-  /** Write the rows one transition changed, before the caller sees the result. */
+  /**
+   * Write the rows one transition changed, before the caller sees the result.
+   * A field the unit read does not hold is not written: two handles on one
+   * domain may each have read the unit, and one of them missing the
+   * authorization must not erase the other's rows.
+   */
   const write = async (unit) => {
     for (const input of unit.inputs) await inputs.put(input.id, { ...input, unitId: unit.id })
     for (const assignment of unit.assignments) await assignments.put(assignment.id, { ...assignment, unitId: unit.id })
-    await mandates.put(unit.id, { ...unit.mandate, unitId: unit.id })
+    if (unit.mandate?.scope !== undefined) await mandates.put(unit.id, { ...unit.mandate, unitId: unit.id })
     const record = stored(unit)
     await units.put(record.id, record)
     return unit

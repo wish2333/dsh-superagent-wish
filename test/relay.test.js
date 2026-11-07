@@ -12,21 +12,32 @@ import * as discoverer from '@wish2333/dsh-superagent-wish/worker-discoverer'
 import * as implementer from '@wish2333/dsh-superagent-wish/worker-implementer'
 import { createHost, createStorageDomain } from './host-fake.js'
 
-const PARTNER = 'partner-1'
+/** Each host is one Partner Session of its own, as each test is one conversation. */
+let conversations = 0
 
-/** A live Partner Agent: records what its inbox takes, the way the real one does. */
+/**
+ * A live Partner Agent: records what its inbox takes, the way the real one
+ * does. `turn` holds the messages of the turn a test is running, which is what
+ * the turn-end fallback adds to.
+ */
 function partnerAgent(base) {
   const delivered = []
-  return {
-    id: PARTNER,
-    session: { id: PARTNER, header: { cwd: base } },
+  const take = (mode) => (message) => {
+    const entry = { mode, message }
+    delivered.push(entry)
+    agent.turn?.push(entry)
+  }
+  const agent = {
+    id: `partner-${conversations}`,
+    session: { id: `partner-${conversations}`, header: { cwd: base } },
     status: 'idle',
     delivered,
-    followup: (message) => delivered.push({ mode: 'followup', message }),
-    steer: (message) => delivered.push({ mode: 'steer', message }),
-    inject: (message) => delivered.push({ mode: 'inject', message }),
+    followup: take('followup'),
+    steer: take('steer'),
+    inject: take('inject'),
     cancel: (cause, options) => delivered.push({ mode: 'cancel', cause, options }),
   }
+  return agent
 }
 
 /**
@@ -34,6 +45,7 @@ function partnerAgent(base) {
  * DSH mounts them; the Partner Session is open and its Agent takes messages.
  */
 async function host() {
+  conversations += 1
   const base = await mkdtemp(join(tmpdir(), 'superagent-wish-'))
   const services = ['agentPresets', 'systemPrompt', 'tools', 'agents', 'workspaceRegistry', 'sessionController', 'permissionPresets', 'workingDirectory']
   openManager(createHost({ storageDomain: createStorageDomain(), services }).ctx)
@@ -41,7 +53,8 @@ async function host() {
   partnerModule.apply(fake.ctx)
   discoverer.apply(fake.ctx)
   implementer.apply(fake.ctx)
-  fake.partner = fake.setAgent(PARTNER, partnerAgent(base))
+  fake.partner = fake.setAgent(`partner-${conversations}`, partnerAgent(base))
+  fake.partnerId = fake.partner.id
   fake.cleanup = () => rm(base, { recursive: true, force: true })
   return fake
 }
@@ -63,7 +76,7 @@ function reportOf(delivery) {
 async function call(fake, name, args) {
   const registration = fake.callsTo('tools.register').find((call) => call.args.definition.name === name)
   assert.ok(registration, `the Partner preset registers ${name}`)
-  return registration.args.definition.execute(args, { agent: { id: PARTNER }, callId: 'call-1', signal: undefined })
+  return registration.args.definition.execute(args, { agent: { id: fake.partnerId }, callId: 'call-1', signal: undefined })
 }
 
 /** The single text block of a tool result. */
@@ -83,17 +96,27 @@ async function listed(fake, unitId) {
   return result.record.units.find((unit) => unit.id === unitId)
 }
 
-/** Every `partner_report` registration, one per Worker preset; both accept the same call. */
+/** Every `partner_report` registration, one per Worker preset, in mount order: discoverer first. */
 function reports(fake) {
-  return fake.callsTo('tools.register')
+  const mounted = ['superagent-wish-discoverer', 'superagent-wish-implementer'].map((path) =>
+    (path === 'superagent-wish-discoverer' ? discoverer : implementer))
+  const registrations = fake.callsTo('tools.register')
     .filter((call) => call.args.definition.name === 'partner_report')
-    .map((call) => call.args.definition)
+  assert.equal(registrations.length, mounted.length)
+  return registrations.map((call) => call.args.definition)
 }
 
-/** Calls `partner_report` as the unit's Worker Session does. */
-async function report(fake, unitId, args) {
-  const [definition] = reports(fake)
-  return definition.execute(args, { agent: { id: `superagent-wish-${unitId}` }, callId: 'call-1', signal: undefined })
+/**
+ * Calls `partner_report` as the unit's Worker Session does, through the
+ * registration of the preset that unit's Worker runs.
+ * @param type the worker type the unit has, which decides its preset
+ */
+async function report(fake, unitId, args, type = 'implementer') {
+  const definitions = reports(fake)
+  const definition = definitions[type === 'discoverer' ? 0 : definitions.length - 1]
+  const result = await definition.execute(args, { agent: { id: `superagent-wish-${unitId}` }, callId: 'call-1', signal: undefined })
+  assert.match(textOf(result), /^Recorded /, `the report was accepted: ${textOf(result)}`)
+  return result
 }
 
 /** The Worker Agent of `unitId`, as the fake Host opened it. */
@@ -194,6 +217,134 @@ test('a repeat of the same report reaches Partner once', async () => {
     await report(fake, unitId, args)
     await report(fake, unitId, args)
     assert.equal(fake.partner.delivered.length, before + 1)
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+/**
+ * Runs one Worker turn the way the loop does: the delivery on the dispatch
+ * wakes the Worker, the test's `turn` is the Worker's work, and the turn's end
+ * makes it idle.
+ * @returns the messages the Partner Session took during the turn
+ */
+async function turn(fake, unitId, act, type = 'implementer') {
+  const agent = worker(fake, unitId)
+  // A fresh array: the fallback holds the one it writes into until it returns.
+  fake.partner.turn = []
+  const took = fake.partner.turn
+  const before = fake.partner.delivered.length
+  await fake.setStatus(agent, 'running')
+  await act()
+  await fake.setStatus(agent, 'idle')
+  // The turn end is carried after the event returns, so the test lets the
+  // listener's work finish before it reads what Partner took.
+  await new Promise((resolve) => setImmediate(resolve))
+  return took
+}
+
+test('a turn that ends without a report brings Partner a waiting report', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake)
+    const took = await turn(fake, unitId, async () => {})
+    assert.equal(took.length, 1)
+    assert.equal(took[0].mode, 'steer')
+    assert.deepEqual(took[0].message.source, { kind: 'agent-message', form: 'relay', senderSessionId: `superagent-wish-${unitId}` })
+    const relayed = reportOf(took[0])
+    assert.equal(relayed.kind, 'worker_report')
+    assert.equal(relayed.unit_id, unitId)
+    assert.equal(relayed.state, 'waiting')
+    const unit = await listed(fake, unitId)
+    assert.equal(unit.state, 'running', 'a waiting report changes no state')
+    assert.equal(unit.lastReport.state, 'waiting')
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+test('the turn-end fallback listens on agent/status across preset scopes', async () => {
+  const fake = await host()
+  try {
+    assert.ok(fake.ctx.storageDomain, 'the host has the store service')
+    const statusListeners = fake.callsTo('on').filter((call) => call.args.name === 'agent/status')
+    assert.ok(statusListeners.length >= 1, 'a preset listens on agent/status')
+    assert.ok(statusListeners.every((call) => call.args.options?.global === true), 'every status listener asks for cross-scope delivery')
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+test('a turn that reported blocked gets no waiting on top of its report', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake)
+    const took = await turn(fake, unitId, () => report(fake, unitId, { state: 'blocked', summary: 'The schema can be one table or four.' }))
+    assert.deepEqual(took.map((delivery) => reportOf(delivery).state), ['blocked'])
+    const unit = await listed(fake, unitId)
+    assert.equal(unit.state, 'waiting-for-input')
+    assert.equal(unit.lastReport.summary, 'The schema can be one table or four.')
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+test('a turn that only reported progress brings Partner the waiting report', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake)
+    const took = await turn(fake, unitId, () => report(fake, unitId, { state: 'progress', summary: 'Half of the tables are written.' }))
+    assert.deepEqual(took.map((delivery) => reportOf(delivery).state), ['waiting'])
+    assert.equal((await listed(fake, unitId)).state, 'running')
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+test('a discoverer unit ends on its ready report, and the turn end adds nothing after it', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake, 'discoverer')
+    const took = await turn(fake, unitId, () => report(fake, unitId, { state: 'ready', summary: 'Wrote three options to options.md.' }, 'discoverer'), 'discoverer')
+    assert.deepEqual(took.map((delivery) => reportOf(delivery).state), ['ready'])
+    const unit = await listed(fake, unitId)
+    assert.equal(unit.state, 'ended')
+    assert.equal(unit.lastReport.state, 'ready')
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+test('a turn end that comes twice is still one waiting report', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake)
+    const agent = worker(fake, unitId)
+    // A fresh array: the fallback holds the one it writes into until it returns.
+    fake.partner.turn = []
+    const took = fake.partner.turn
+    await fake.setStatus(agent, 'running')
+    await fake.setStatus(agent, 'idle')
+    await fake.setStatus(agent, 'running')
+    await fake.setStatus(agent, 'idle')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(took.filter((delivery) => reportOf(delivery).state === 'waiting').length, 1)
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+test('a unit whose round has ended gets no waiting when its worker goes idle', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake)
+    await call(fake, 'partner_stop', { unitId, reason: 'wish changed direction' })
+    const agent = worker(fake, unitId)
+    const before = fake.partner.delivered.length
+    await fake.setStatus(agent, 'running')
+    await fake.setStatus(agent, 'idle')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(fake.partner.delivered.length, before)
   } finally {
     await fake.cleanup()
   }
