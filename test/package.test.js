@@ -19,9 +19,18 @@ test('every top-level module ships, and every shipped module exists', () => {
   }
 })
 
-test('the policy and the queue are reachable as subpaths', () => {
-  assert.equal(manifest.exports['./policy'], './policy.js')
-  assert.equal(manifest.exports['./queue'], './queue.js')
+// ADR-0002: `exports` is the preset interface. A subpath a preset row mounts is
+// there; an internal module a row never mounts is not, and nothing else may
+// depend on it.
+test('the subpaths are the ones the preset rows mount', async () => {
+  const { PRESETS } = await import('@wish2333/dsh-superagent-wish')
+  const mounted = PRESETS.map((preset) => `./${preset.subpath}`).sort()
+  assert.deepEqual(Object.keys(manifest.exports).filter((key) => mounted.includes(key)).sort(), mounted)
+  for (const key of ['./relay', './judge', './sessions', './policy', './queue']) {
+    assert.equal(manifest.exports[key], undefined, `${key} is not a subpath`)
+  }
+  // Each mounted subpath resolves, which is what a preset row does at load.
+  for (const subpath of mounted) await import(`@wish2333/dsh-superagent-wish/${subpath.slice(2)}`)
 })
 
 // The manager opens the working-unit tables as it loads, without a caller

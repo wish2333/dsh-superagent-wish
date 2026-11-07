@@ -8,18 +8,13 @@
     ".": "./index.js",
     "./partner": "./partner.js",
     "./secretary": "./secretary.js",
-    "./sessions": "./sessions.js",
     "./worker": "./worker.js",
     "./worker-discoverer": "./worker-discoverer.js",
     "./worker-implementer": "./worker-implementer.js",
-    "./policy": "./policy.js",
-    "./queue": "./queue.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
     "./package.json": "./package.json",
-    "./relay": "./relay.js",
-    "./sources": "./sources.js",
-    "./judge": "./judge.js"
+    "./sources": "./sources.js"
   },
   "files": [
     "index.js",
