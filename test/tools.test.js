@@ -131,6 +131,15 @@ test('a missing storage domain leaves partner_report absent rather than failing 
   }
 })
 
+// The Partner preset's surface is its five tools and its prompt; a helper kept
+// exported for a test is a second interface nothing else keeps working.
+test('the Partner preset exports its five tool definitions and nothing else that is callable per unit', async () => {
+  const exported = Object.keys(partnerModule)
+  // `stopUnit` was exported for a test; a unit's tool is what stops it.
+  assert.equal(exported.filter((name) => /^stopUnit$/.test(name)).length, 0, exported.join(', '))
+  assert.ok(partnerModule.TOOLS.some((definition) => definition.name === 'partner_stop'))
+})
+
 // `tools.register` reads `execute` off the definition; one left in the options
 // is dropped, and the tool then fails at call time.
 test('every tool carries execute on its definition, never in the registration options', () => {

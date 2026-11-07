@@ -398,16 +398,6 @@ async function startNow(ctx, store, unit, { session }) {
   return store.get(started.id)
 }
 
-/** Record one dispatch's working unit under the policy now in force. */
-function record(store, policy, unit) {
-  return {
-    ...unit,
-    text: body,
-  }
-}
-
-
-
 /**
  * `partner_followup`: queue one input and send it to the unit's current Worker.
  *
@@ -445,7 +435,7 @@ export async function followup(ctx, store, policy, args, exec) {
  * `partner_stop`: cancel the Worker's turn. The unit keeps its state, its
  * directory and its queued input, and the next follow-up continues it.
  */
-export async function stopUnit(ctx, store, slots, args) {
+async function stopUnit(ctx, store, slots, args) {
   const unitId = String(args.unitId ?? '').trim()
   const unit = store.get(unitId)
   if (!unit) return refused(`Stop refused: there is no working unit ${unitId}.`)
@@ -503,7 +493,8 @@ function describeSource(id, block) {
  * saved through the policy record and a change moves its version; the working
  * units that are still open hear of the change as they do of any other.
  */
-export async function setup(ctx, store, policy, args, exec) {
+export async function setup(ctx, store, args, exec) {
+  const policy = await sharedPolicy(ctx)
   const settings = args.settings
   if (settings === undefined) {
     const current = policy.current()
@@ -638,7 +629,7 @@ export function apply(ctx, config) {
         partner_followup: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => followup(workerCtx, handle, rules, args, exec))),
         partner_stop: guarded((args) => store().then((handle) => stopUnit(workerCtx, handle, slots, args))),
         partner_list: guarded((args) => store().then((handle) => listUnits(handle, args))),
-        partner_setup: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => setup(workerCtx, handle, rules, args, exec))),
+        partner_setup: guarded((args, exec) => store().then((handle) => setup(workerCtx, handle, args, exec))),
       }
       for (const definition of TOOLS) {
         storeCtx.effect(() => workerCtx.tools.register({ ...definition, execute: bodies[definition.name] }))
