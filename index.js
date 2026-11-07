@@ -7,7 +7,9 @@
  * no restriction is applied to an inherited global set.
  */
 
-export const inject = ['agentPresets']
+import { openWorkingUnits } from './working-units.js'
+
+export const inject = ['agentPresets', 'storageDomain']
 
 export const PRESETS = [
   {
@@ -68,7 +70,29 @@ export function presetRows(preset) {
   ]
 }
 
+/**
+ * Open the working unit tables on this plugin's scope.
+ *
+ * The tables are shared by every preset, and a preset's services live in its own
+ * realm, so the manager owns the one handle. `ctx.effect` releases it on unload.
+ *
+ * @param ctx the plugin context, which must provide `storageDomain`
+ * @returns a promise of the store, or undefined when the Host has no storage domain
+ */
+export function openStore(ctx) {
+  if (!ctx.storageDomain) return undefined
+  // Returned rather than awaited, so `apply` stays synchronous like every other
+  // insert; the opening closes its own domain when it fails.
+  return openWorkingUnits(ctx).catch((error) => {
+    ctx.logger?.warn(`superagent-wish: the working unit tables did not open: ${error.message}`)
+    throw error
+  })
+}
+
 export function apply(ctx) {
+  // `apply` stays synchronous like every other insert, so the opening runs on
+  // its own; a caller that needs the store awaits `openStore(ctx)` itself.
+  openStore(ctx)?.catch(() => {})
   for (const preset of PRESETS) {
     const registration = ctx.agentPresets.register({
       id: preset.id,
