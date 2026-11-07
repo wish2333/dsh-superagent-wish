@@ -204,14 +204,13 @@ export const SETUP_TOOL = {
     'Two sources feed the Secretary: files put into watched directories, and a schedule that patrols those directories on a period.',
     'For a file source, config holds directories (absolute paths), types (a list of { match, defaultHandling, note }), and for a schedule, everySeconds.',
     'Rules are the text the Secretary judges by, one per judgement. A change takes effect on the next judgement, without a restart.',
-    'Pass principalSessionId, the Session id of the wish conversation this setup belongs to: the Secretary session of a new Partner conversation is created beside it and judges by these rules.',
+    'A change is made for the conversation you are in: its Secretary judges the events the new setup lets in, so name no Session.',
     'Read it before changing it, and change one source or the rules at a time. A configuration that cannot run is refused and nothing is saved.',
   ].join(' '),
   parameters: {
     type: 'object',
     additionalProperties: false,
     properties: {
-      principalSessionId: { type: 'string', description: 'The Session id of this Partner conversation. Omit it only when reading: a change is refused without it.' },
       settings: {
         type: 'object',
         additionalProperties: false,
@@ -512,8 +511,13 @@ export async function setup(ctx, store, policy, args, exec) {
   const saving = settings.rules !== undefined ? 'rules' : settings.source !== undefined ? 'source' : undefined
   const extra = Object.keys(settings).filter((key) => !['rules', 'source', 'config', 'enabled'].includes(key) && settings[key] !== undefined)
   if (!saving || extra.length) throw new Error('save one thing per call: settings.source with config and enabled, or settings.rules')
-  const principal = String(args.principalSessionId ?? '').trim()
-  if (!principal) throw new Error('a change needs principalSessionId, the Session id of the wish conversation it belongs to, so the rules reach that conversation\'s Secretary')
+  // The conversation is the one the call was made from, as for every other
+  // Partner tool: Partner never names a Session, wish never reads one.
+  const principal = String(exec?.agent?.id ?? '').trim()
+  if (!principal) throw new Error('a change is refused: this call carries no calling session, so no conversation\'s Secretary can judge by the new setup')
+
+  // The setup belongs to this conversation, whichever part of it changes.
+  await sharedPolicy(ctx).then((record) => setPrincipal(ctx, record, principal))
 
   if (saving === 'rules') {
     const rules = rulesOf(settings.rules)
@@ -546,7 +550,7 @@ export async function setup(ctx, store, policy, args, exec) {
   const { from, to, notified } = await savePolicy(policy, store, ctx, { sources }, exec?.agent?.session)
   // The events read from now on are judged for this conversation, and the ones
   // that waited for a Secretary reach this one; an event judged since stays judged.
-  await Promise.all([sharedPolicy(ctx).then((record) => setPrincipal(ctx, record, principal)), reannotate(ctx, store, principal)])
+  await reannotate(ctx, store, principal)
   const line = `${id} source saved${from === to ? ' (unchanged)' : ''}: ${describeSource(id, block)}`
   return textResult(`${line}.${scheduled}${notified.length ? ` ${notified.length} open working unit(s) were told the policy changed.` : ''}`, { id, from, to, config: block })
 }

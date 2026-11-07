@@ -89,7 +89,7 @@ test('the settings tool saves the file source: its directories, file types and p
   const host = await plugin()
   try {
     const text = textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: {
         source: 'files',
         config: {
@@ -117,7 +117,7 @@ test('the settings tool saves the schedule source: its patrol period', async () 
   const host = await plugin()
   try {
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } },
     }))
     assert.deepEqual(configOf(host, 'schedule'), { enabled: true, config: { everySeconds: 300, report: 'change' } })
@@ -130,12 +130,12 @@ test('the settings tool refuses a configuration it cannot run, and keeps what wa
   const host = await plugin()
   try {
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: { source: 'files', config: { enabled: true, directories: ['/inbox'], types: [] } },
     }))
     const before = JSON.stringify(configOf(host, 'files'))
     const text = textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: {
         source: 'files',
         config: { enabled: true, directories: ['inbox'], types: [{ match: '.md', defaultHandling: 'ignore', note: '' }] },
@@ -148,11 +148,42 @@ test('the settings tool refuses a configuration it cannot run, and keeps what wa
   }
 })
 
+// User story 5: Partner names a unit by its working unit id, so a settings call
+// carries no Session id; the conversation it is made from is the one it serves.
+test('a settings change takes its conversation from the call, not from a session id in the arguments', async () => {
+  const host = await plugin()
+  try {
+    const text = textOf(await call(host, 'partner_setup', {
+      settings: { rules: [{ id: 'inbox-notes', instruction: 'Open a working unit for a note placed in the inbox.' }] },
+    }))
+    assert.match(text, /Saved 1 rule/)
+    const policy = host.medium.contents('policy').current
+    assert.equal(policy.principal, PARTNER, 'the call\'s own conversation records the rules')
+    // Reading a new event judges it for the Secretary of that conversation.
+    const inbox = join(host.base, 'inbox')
+    await put(inbox, 'note.md', '# a note')
+    textOf(await call(host, 'partner_setup', {
+      settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
+    }))
+    const sources = await import('@wish2333/dsh-superagent-wish/sources')
+    sources.apply(host.ctx)
+    assert.equal((await sources.poll(host.ctx)).length, 1, 'the file source reads the new directory')
+    const pending = Object.values(host.medium.contents('source_events')).filter((event) => event.status === 'pending')
+    assert.equal(pending.length, 1)
+    assert.equal(pending[0].principal, PARTNER)
+    const description = tool(host, 'partner_setup').description
+    assert.doesNotMatch(description, /principalSessionId/)
+    assert.deepEqual(tool(host, 'partner_setup').parameters.properties.principalSessionId, undefined)
+  } finally {
+    await host.cleanup()
+  }
+})
+
 test('the settings tool saves the judging rules as rule text in the policy', async () => {
   const host = await plugin()
   try {
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: {
         rules: [{ id: 'inbox-notes', name: 'Inbox notes', instruction: 'Open a working unit for a note placed in the inbox.' }],
       },
@@ -178,13 +209,13 @@ test('the Secretary gets the rules at request time, so a saved rule reaches the 
     assert.equal(typeof (await ask()), 'string')
 
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: { rules: [{ id: 'inbox-notes', instruction: 'Open a working unit for a note placed in the inbox.' }] },
     }))
     assert.ok((await ask()).includes('Open a working unit for a note placed in the inbox.'))
 
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: { rules: [{ id: 'inbox-notes', instruction: 'Judge an inbox note and open work only for a decision it requires.' }] },
     }))
     // The same mount, the next request: no reload, no restart.
@@ -201,7 +232,7 @@ test('a disabled rule is left out of the Secretary\'s request', async () => {
   const host = await plugin()
   try {
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: {
         rules: [
           { id: 'inbox-notes', instruction: 'Open a working unit for a note placed in the inbox.' },
@@ -249,7 +280,7 @@ test('a file put in a watched directory is recorded as an event the Secretary ju
     sources.apply(host.ctx)
     const inbox = join(host.base, 'inbox')
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
     const path = await put(inbox, 'note.md', '# a note')
@@ -275,7 +306,7 @@ test('a file already processed is not opened twice, after a restart either', asy
     sources.apply(host.ctx)
     const inbox = join(host.base, 'inbox')
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
     await put(inbox, 'note.md', '# a note')
@@ -305,7 +336,7 @@ test('a file that changed is a new event, and one of an ignored type is recorded
     sources.apply(host.ctx)
     const inbox = join(host.base, 'inbox')
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: {
         source: 'files',
         config: {
@@ -341,10 +372,10 @@ test('the schedule source seats its patrol on a ctx.schedule task and records wh
     await put(inbox, 'note.md', '# a note')
     await put(inbox, 'other.txt', 'not a watched type')
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
-    textOf(await call(host, 'partner_setup', { principalSessionId: PRINCIPAL, settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
+    textOf(await call(host, 'partner_setup', { settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
 
     const created = host.callsTo('schedule.create').map((call) => call.args.request)
     assert.equal(created.length, 1)
@@ -375,16 +406,16 @@ test('a patrol that observes nothing new writes no row, and a patrol that report
     const inbox = join(host.base, 'inbox')
     await put(inbox, 'note.md', '# a note')
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PRINCIPAL,
+
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
-    textOf(await call(host, 'partner_setup', { principalSessionId: PRINCIPAL, settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
+    textOf(await call(host, 'partner_setup', { settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
     textOf(await call(host, 'partner_patrol', {}, SECRETARY_ID))
     const unchanged = textOf(await call(host, 'partner_patrol', {}, SECRETARY_ID))
     assert.match(unchanged, /nothing changed/)
     assert.equal(Object.values(host.medium.contents('source_events')).filter((event) => event.kind === 'patrol').length, 1)
 
-    textOf(await call(host, 'partner_setup', { principalSessionId: PRINCIPAL, settings: { source: 'schedule', config: { report: 'always' } } }))
+    textOf(await call(host, 'partner_setup', { settings: { source: 'schedule', config: { report: 'always' } } }))
     const recorded = textOf(await call(host, 'partner_patrol', {}, SECRETARY_ID))
     assert.match(recorded, /Patrol recorded at/)
     const patrols = () => Object.values(host.medium.contents('source_events')).filter((event) => event.kind === 'patrol')
@@ -400,16 +431,13 @@ test('a patrol that observes nothing new writes no row, and a patrol that report
 async function withNote(host, options = {}) {
   const inbox = join(host.base, 'inbox')
   await put(inbox, 'note.md', '# a note')
-  // The setup is saved from the Partner conversation that is open, not from a wish session that names no Secretary.
+  // The setup is saved from the Partner conversation that is open, which is the one its Secretary serves.
   textOf(await call(host, 'partner_setup', {
-    principalSessionId: PARTNER,
     settings: {
       rules: [{ id: 'inbox-notes', instruction: 'Open a working unit for a note placed in the inbox.', ...(options.rule ?? {}) }],
     },
   }))
   textOf(await call(host, 'partner_setup', {
-    principalSessionId: PRINCIPAL,
-    principalSessionId: PARTNER,
     settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
   }))
   const sources = await import('@wish2333/dsh-superagent-wish/sources')
@@ -448,11 +476,11 @@ test('an event that arrives while no conversation is open is recorded, and the n
     // No Secretary exists: the conversation is not open.
     host.removeSession(SECRETARY_ID)
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PARTNER,
+
       settings: { rules: [{ id: 'inbox-notes', instruction: 'Open a working unit for a note placed in the inbox.' }] },
     }))
     textOf(await call(host, 'partner_setup', {
-      principalSessionId: PARTNER,
+
       settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
     }))
     await put(inbox, 'note.md', '# a note')
@@ -573,17 +601,17 @@ test('partner_list shows the dropped events to Partner, with when, which event a
 test('saving a new patrol period edits the one task, and turning the source off pauses it', async () => {
   const host = await plugin()
   try {
-    textOf(await call(host, 'partner_setup', { principalSessionId: PARTNER, settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
+    textOf(await call(host, 'partner_setup', { settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
     const [task] = Object.values(host.tasks())
     assert.deepEqual(task.timing, { kind: 'every', everySeconds: 300 })
     assert.equal(task.status, 'active')
     assert.equal(host.callsTo('schedule.create').length, 1)
 
-    textOf(await call(host, 'partner_setup', { principalSessionId: PARTNER, settings: { source: 'schedule', config: { everySeconds: 600 } } }))
+    textOf(await call(host, 'partner_setup', { settings: { source: 'schedule', config: { everySeconds: 600 } } }))
     assert.equal(host.callsTo('schedule.create').length, 1, 'no second task is opened')
     assert.deepEqual(host.tasks()[task.id].timing, { kind: 'every', everySeconds: 600 })
 
-    textOf(await call(host, 'partner_setup', { principalSessionId: PARTNER, settings: { source: 'schedule', enabled: false } }))
+    textOf(await call(host, 'partner_setup', { settings: { source: 'schedule', enabled: false } }))
     assert.equal(host.tasks()[task.id].status, 'paused')
   } finally {
     await host.cleanup()
