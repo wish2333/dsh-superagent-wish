@@ -1,7 +1,7 @@
 {
   "name": "@wish2333/dsh-superagent-wish",
   "version": "0.1.0",
-  "description": "Personal super-agent preset for DeepSeek Harness — registers the 总控 mode with topic anchoring, layered requirement building, and worker dispatch.",
+  "description": "Personal super-agent preset for DeepSeek Harness — registers the Partner mode with topic anchoring, layered requirement building, and worker dispatch.",
   "private": true,
   "type": "module",
   "exports": {

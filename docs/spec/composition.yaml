@@ -1,102 +1,47 @@
 # ./composition.yaml
-# 组合层：声明 Worker 类型与能力授权
-# 换运行时时只改 runtime_binding，不改 workers 和 capabilities
-# 规格说明见 composition-spec.md
+# 组合层：两类 Worker 的 preset 与工具边界
+# 规格说明见 composition-spec.md，技术方案见 ../impl/superagent-impl.md
 
-version: "1.0"
-
-capabilities:
-  skills-local:
-    source: skills-local          # plugin-manifest.md 中的 id
-    description: 自研技能
-  skills-third:
-    source: skills-third
-    description: 第三方技能
-  memory-recall:
-    source: memory-hindsight
-    op: recall
-    description: 记忆读取
-  memory-retain:
-    source: memory-hindsight
-    op: retain
-    description: 记忆写入（Hindsight retain）
-  browser-detect:
-    source: browser-detect
-    description: 浏览器探测
-  browser-runtime:
-    source: browser-runtime
-    description: 浏览器自动化（CDP）
-  office-read:
-    source: office-skills
-    op: read
-    description: 文档读取（pdf/pptx/xlsx/docx）
-  office-write:
-    source: office-skills
-    op: write
-    description: 文档写入（pdf/pptx/xlsx/docx）
-  file-read:
-    path_scope: "~/AI/"
-    description: 文件读取
-  file-write-standard:
-    path_scope:
-      - "~/AI/docs/"
-      - "~/AI/repos/"
-    description: 标准路径文件写入
-  file-write-extended:
-    path_scope: "~/AI/"
-    description: 扩展路径文件写入（含 standard 之外的路径）
-  web-fetch:
-    description: 网络搜索与抓取
+version: "2.0"
 
 workers:
   discoverer:
     label: 启发者
+    preset_id: superagent-wish-discoverer
     purpose: 探索性任务，不产生持久副作用
     input: exploratory_prompt
     output: ideas_and_options
-    capabilities:
-      skills-local: free
-      skills-third: free
-      memory-recall: free
-      memory-retain: off
-      browser-detect: free
-      browser-runtime: off
-      office-read: free
-      office-write: off
-      file-read: free
-      file-write-standard: off
-      file-write-extended: off
-      web-fetch: free
+    tools:
+      - read
+      - glob
+      - grep
+      - web_search
+      - web_fetch
+      - todo_write
 
   implementer:
     label: 执行者
-    purpose: 按 task spec 产出交付物，允许有持久副作用
+    preset_id: superagent-wish-implementer
+    purpose: 按 task spec 产出交付物
     input: task_spec
     output: artifact
-    capabilities:
-      skills-local: free
-      skills-third: free
-      memory-recall: free
-      memory-retain: mandate
-      browser-detect: free
-      browser-runtime: mandate
-      office-read: free
-      office-write: mandate
-      file-read: free
-      file-write-standard: free
-      file-write-extended: mandate
-      web-fetch: free
-
-authorization_levels:
-  free: Worker 在任务范围内可自主使用，无需在 task spec 中列出
-  mandate: 须在 task spec 的授权列表中显式列出；总控在派发确认点一并呈给 wish
-  off: 此 Worker 类型不可使用该能力
+    tools:
+      - read
+      - glob
+      - grep
+      - web_search
+      - web_fetch
+      - write
+      - edit
+      - bash
+      - todo_write
 
 runtime_binding:
-  # 当前运行时：Hermes 单 session 模式
-  # 换运行时只改此节
-  hermes:
-    dispatch_method: delegate_task
-    context_isolation: partial        # 上下文隔离，但结果回流主 session（已知限制）
-    mandate_check: pre_dispatch       # 总控在派发确认点核查 mandate 项
-    mandate_enforcement: prompt_discipline  # 无架构保障，靠 prompt 纪律
+  dsh:
+    preset_registration: ctx.agentPresets.register
+    session_creation: ctx.sessionController.create
+    workspace: ctx.workspaceRegistry.create
+    permission: ctx.permissionPresets.set
+    delivery: agentDelivery.send
+    permission_mode: danger-full-access
+    model: default

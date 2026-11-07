@@ -1,21 +1,27 @@
-# Worker 插件清单（runtime-common）
+# 插件依赖的 DSH 能力
 
-来源：`~/.agents/HARNESS.md` Worker 边界表。双轨共用；换运行时只改接线，不改本清单业务含义。  
-更新日期：2026-11-06（memory 后端：Xinference → oMLX）
+本文件列出本插件用到的 DeepSeek Harness Host 服务。换 DSH 版本时，按本表验证一遍。
 
-| id | 能力 | 本机落点 | 状态 |
-|---|---|---|---|
-| skills-local | 自研技能（软链） | `~/.agents/skills/` + 库内 life/场景-求职 | 完成 |
-| skills-third | 第三方技能 | `~/.agents/skills/` + `.skill-lock.json` | 完成 |
-| browser-detect | 浏览器探测 | Edge + `browser-ops/scripts/detect.py` | 完成 |
-| browser-runtime | 浏览器自动化 | browser-harness + bsk | 完成 |
-| memory-hindsight | 记忆 | Hindsight slim + **oMLX**（embed/rerank :8000） | 完成 |
-| office-skills | 文档办公 | pdf/pptx/xlsx/docx 等 | 完成 |
-| mcp-builder | MCP 构建参考 | `mcp-builder` 技能 | 完成 |
+| 服务 | 用途 | 状态 |
+|---|---|---|
+| `agentPresets` | 注册 Partner、启发者、执行者三个 preset | 已验证（`register(definition)`） |
+| `systemPrompt` | 向 Partner 注入协作模式行为规则 | 已验证（`section({ name, order, text })`） |
+| `workspaceRegistry` | 给每个 Worker 建独立工作目录 | 已验证（`create(cwd)`） |
+| `sessionController` | 起 Worker 会话、取名、取回会话 | 已验证（`create` / `rename` / `resolveAgent`） |
+| `permissionPresets` | 设 Worker 会话权限 | 已验证（`set(session, 'danger-full-access')`） |
 
-接线约定：
+验证依据：`/Applications/DeepSeek Harness.app/Contents/Resources/app.asar` 的类型声明。
 
-- retain/recall 前：`hooks/pre-retain.sh` → 探 `<omlx-service>/health`（调用方 A）
-- 嵌入/重排：Hindsight env → `host.docker.internal:8000`（模型 id 见 cutover 方案）
-- 自动记忆验证期：S1（任务结束钩子 → retain；钩子脚本见 `hooks/`）
-- 已退役：Xinference Metal :9997、ensure/idle-release LaunchAgent（见 `archive/2026-11-06/xinference-retired/`）
+当前实现只用到前两项。后三项在派发链路实现时才接入，技术方案见 `../impl/superagent-impl.md`。
+
+---
+
+## 版本
+
+| 包 | 原型钉的版本 |
+|---|---|
+| `@deepseek-ai/dsh-api-session-controller` | `0.2.1-alpha.2` |
+| `@deepseek-ai/dsh-agent` | `0.2.1-alpha.2` |
+| `@deepseek-ai/cordis` | `4.0.5-alpha.1` |
+
+DSH 是开发者预览，升级前先跑一次派发验证。

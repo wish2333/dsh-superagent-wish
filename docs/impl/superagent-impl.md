@@ -1,127 +1,104 @@
-# 总控实现方案
+# SuperAgent 层实现方案
 
-本文件描述在 DeepSeek Harness（DSH）上实现总控的具体方案。
-规格来源：`framework.md`（四层结构）、`interaction-spec.md`（总控行为）、`composition-spec.md`（Worker 授权）、`dispatch-guide.md`（派发操作）。
-
----
-
-## 一、架构决策
-
-**总控运行在 desktop profile 的标准 DSH 会话中，不使用 dsh-superagent 服务。**
-
-dsh-superagent 设计用于团队工作流自动化（GitHub PR、飞书消息），其 Router 是精简的派发机器（路由备注不超过 30 词）。总控要求深度对话（良师益友角色）。两者的会话模型根本不同。
-
-dsh-superagent 的 `wish/a1-local-assistant` 分支，用于后续 Phase B——无人值守的后台自动化（文件入口、定时任务）。Phase A 不依赖它。
+本文件描述 SuperAgent 层在 DeepSeek Harness（DSH）上的派发技术方案。
+行为规格见 `../spec/interaction-spec.md`，Worker 类型与工具见 `../spec/composition-spec.md`，派发操作见 `../guides/dispatch-guide.md`。
 
 ---
 
-## 二、概念映射
+## 一、定位
 
-| dsh-superagent 概念 | DSH 原生能力 | 说明 |
+SuperAgent 层就是 Partner（主 Agent）。它和 Worker 都是 DSH 会话，差别在 preset：
+
+| 角色 | preset | 说明 |
 |---|---|---|
-| Main Session（Router） | desktop profile 当前会话 | 对话即界面 |
-| Executor Session（Worker） | `subagent` / `subagent_fork` | 下节说明选择规则 |
-| Source | 对话 + `schedule_create` | 触发事件来源 |
-| Trigger | wish 的消息 / cron 事件 | — |
-| Eval | 总控 in-context 决策 | wish 唯一用户，gate 隐式通过 |
-| Mandate | task spec `authorization` 节 | 见 `composition-spec.md` |
-| Ticket | YAML 文件 + `todo_write` | `~/AI/workspace/tickets/` |
-| Assignment | `subagent` 返回的 agent_id | 追踪运行中的 Worker |
-| Subscription | 不适用 | Worker 从 task spec 获得完整上下文 |
-| Channel | `subagent` 完成通知自动回流 | — |
-| Watchdog | 无（已知缺口） | Worker 自报卡点 |
-| Panel | DSH Web GUI 对话界面 | 总控在主界面工作 |
+| Partner | `superagent-wish-recruiter` | 本插件注册。只做对话和派发，不执行 |
+| 启发者 | `superagent-wish-discoverer` | 本插件注册。发散探索，不给写入工具 |
+| 执行者 | `superagent-wish-implementer` | 本插件注册。按 task spec 产出交付物 |
+
+Partner 在会话启动时选中；Worker 会话由 Partner 派发时创建，不供手动选择。
 
 ---
 
-## 三、Worker 派发工具选择
+## 二、派发链路
 
-### 启发者 → `subagent_fork`
+每一步用的都是 DSH Host 服务，原型 `dsh-superagent` 已在用同一组接口。
 
-`subagent_fork` 继承当前会话的全部对话历史。启发者需要这份上下文才能做有意义的探索，无需在 exploratory prompt 里重复背景。
+| 步骤 | 接口 | 说明 |
+|---|---|---|
+| 1. 建工作目录 | `ctx.workspaceRegistry.create(cwd)` | 每个 Worker 一个独立目录 |
+| 2. 起 Worker 会话 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` | `agentPreset` 指定启发者或执行者 |
+| 3. 取到会话 | `ctx.sessionController.resolveAgent(sessionId)` | 返回 live Agent |
+| 4. 设权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` | 与原型一致 |
+| 5. 命名 | `ctx.sessionController.rename({ sessionId, title })` | 标题取任务标题 |
+| 6. 送任务 | `agentDelivery.send(agent, requestId, text, mode)` | `mode` 三档：`queue` / `steer` / `inject` |
+| 7. 收结果 | 监听会话事件 | Worker 完成后由 Partner 整合 |
 
-### 执行者 → `subagent`
+插件声明的依赖：
 
-`subagent` 从全新会话开始，只看到总控写入的 task spec。执行者只管实现，不参与讨论，隔离度更高能防止 Worker 被对话历史里的无关信息干扰。
-
-task spec 须包含执行者需要的全部上下文（目标、范围、相关文件路径、交付物、authorization 节）。格式见 `dispatch-guide.md`。
-
----
-
-## 四、工单（Ticket）
-
-### 文件路径
-
-`~/AI/workspace/tickets/<id>.yaml`
-
-id 格式：`t-YYYYMMDD-NNN`（例：`t-20261107-001`）
-
-### YAML 结构
-
-```yaml
-id: t-20261107-001
-title: 一句话说明任务
-type: discoverer          # discoverer | implementer
-status: open              # open | ended | stopped
-created_at: 2026-11-07T12:00:00+08:00
-mandate:                  # 仅 implementer 填写；discoverer 为空列表
-  - capability: file-write-standard
-    scope: 写入 ../spec/composition-spec.md
-worker_agent_id: null     # subagent 启动后填入
-ended_at: null
-result_summary: null      # 总控整合结果后填入
+```js
+export const inject = ['agentPresets', 'systemPrompt', 'workspaceRegistry',
+  'sessionController', 'permissionPresets']
 ```
 
-### 生命周期
-
-1. 总控决定派 Worker → 写入 Ticket YAML（status: open）+ `todo_write` 标为 in_progress
-2. 派发确认点 → wish 确认 → 启动 `subagent` / `subagent_fork`
-3. 填入 `worker_agent_id`
-4. Worker 完成 → 总控整合结果 → 更新 YAML（status: ended，填 result_summary）+ `todo_write` 标为 completed
+**模型**：派发时不指定，Worker 会话用默认模型。
 
 ---
 
-## 五、触发来源（Source）
+## 三、两个 Worker preset 的差别
 
-| 来源 | 实现方式 |
+两类 Worker 的差别全部落在 preset 上，不靠提示词约束。
+
+| 项 | 启发者 | 执行者 |
+|---|---|---|
+| 写入工具（`write` / `edit`） | 不给 | 给 |
+| `bash` | 不给 | 给 |
+| 只读工具（`read` / `glob` / `grep` / `web_search` / `web_fetch`） | 给 | 给 |
+| 送任务方式 | `queue` | `queue` |
+| 回报方式 | 会话结束时把结论带回 Partner | 会话结束时把交付物和偏差带回 Partner |
+
+启发者不能写文件，靠工具白名单保证，不靠提示词。
+
+---
+
+## 四、确认点
+
+Partner 在调用 `sessionController.create` 之前自行暂停，等你确认。DSH 没有强制机制，这是主 Agent 的行为约定。
+
+确认消息格式见 `../guides/dispatch-guide.md` 第四节。
+
+---
+
+## 五、结果回传
+
+Worker 的结果回到 Partner，由 Partner 整合后交给你，不直接透传。
+
+| Worker 类型 | Partner 的处理 |
 |---|---|
-| wish 的消息 | 直接对话 |
-| 定时任务 | `schedule_create`（target: this_session） |
-| 独立后台任务 | `schedule_create`（target: new_once） |
-| 文件夹巡查 | 待实现（Phase B，使用 dsh-superagent Local Source） |
-
-cron 触发时，总控收到 prompt，在当前 session 里走 Eval（判断要不要派 Worker，还是直接处理）。
+| 启发者 | 提炼选项和盲点，并入当前需求模型，标「推断」或「启发者建议」 |
+| 执行者 | 核查交付物是否符合 task spec；有偏差按原因＋影响＋选项汇报 |
 
 ---
 
-## 六、总控行为载体
+## 六、与 dsh-superagent 原型的关系
 
-总控的行为规格通过 **`总控` skill** 注入。
+本插件复用原型的派发方式，不复制原型的领域模型。
 
-- skill 路径：`~/AI/repos/skill-dev/wish/总控/SKILL.md`
-- 安装后软链：`~/.agents/skills/总控/`
-- 触发：wish 要求总控模式时，agent 加载 `总控` skill
+| 原型有 | 本插件 |
+|---|---|
+| Source / Thread / Eval / Decision | 不做。触发只有你的消息 |
+| Ticket / Mandate / Assignment / Subscription | 不做 |
+| 会话创建、工具白名单、消息投递 | 复用同一组 DSH Host 服务 |
+| 两个 preset（router / worker） | 三个 preset（partner / discoverer / implementer） |
 
-skill 包含：角色定义、5 条对话行为、打扰判断规则、Worker 派发操作（引用 `dispatch-guide.md`）、工单管理操作。
+原型的领域模型服务于团队事件流，本插件服务于个人对话，两者不合并。
 
 ---
 
-## 七、已知缺口（Phase A 接受）
+## 七、风险
 
-| 缺口 | 影响 | 备注 |
+| 风险 | 影响 | 应对 |
 |---|---|---|
-| 无 Watchdog | Worker 失败时无自动告警 | Worker 自报卡点 |
-| Mandate 靠 prompt 纪律 | 无架构强制 | Worker 须遵守 task spec |
-| Worker 结果回流主 session | 长对话上下文积累 | 手动开新会话 |
-| 无 Subscription | Worker 不接收后续触发 | 单次任务足够 |
-| 文件夹巡查未实现 | 文件入口不可用 | Phase B 补入 |
-
----
-
-## 八、实现阶段
-
-| 阶段 | 内容 | 状态 |
-|---|---|---|
-| Phase A1 | 总控 skill + 工单目录 + 对话触发 | 当前 |
-| Phase A2 | cron 触发接入（schedule_create） | 近期 |
-| Phase B | dsh-superagent `wish/a1-local-assistant` 作为后台自动化 Source | 后续 |
+| DSH 是开发者预览，Host 服务会变 | 派发链路可能失效 | 锁版本；升级前先跑 `node` 加载和一次派发验证 |
+| 原型钉的是 `@deepseek-ai/dsh-api-session-controller@0.2.1-alpha.2` | 与本机 DSH 版本可能不一致 | 装好后核对版本 |
+| 确认点靠行为约定 | 可能漏掉确认直接派发 | 规格里写死，后续可加运行时检查 |
+| 无 Watchdog | Worker 卡住时无自动告警 | Worker 自报卡点 |

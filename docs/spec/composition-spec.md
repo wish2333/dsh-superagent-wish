@@ -1,110 +1,78 @@
-# 组合层规格
+# Worker 组合规格
 
-本文件是组合层的规格说明。它描述 Worker 有哪些类型、每类 Worker 可以访问哪些能力、mandate 项的确认机制，以及与运行时的接线方式。
-
+本文件描述两类 Worker 的定义、各自的工具边界，以及与 DSH 的接线方式。
 机器可读的配置见 `composition.yaml`（与本文件保持同步）。
+技术方案见 `../impl/superagent-impl.md`。
 
 ---
 
 ## 一、位置与职责
 
-组合层在资产层/能力层（稳定）和运行时层（可替换）之间建立显式接缝。
+Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。
 
-- **不存放知识**，不定义业务逻辑。
-- **只声明** Worker 类型和能力授权边界。
-- **换运行时时只改运行时接线**（`composition.yaml` 中的 `runtime_binding` 节），不改 Worker 类型和能力矩阵。
+- 每个 Worker 会话有一个 preset。
+- preset 决定 Worker 能用哪些工具。
+- 两类 Worker 的差别全部落在 preset 上，不靠提示词约束。
 
 ---
 
 ## 二、Worker 类型
 
-当前定义两种 Worker 类型。
-
 ### 启发者（discoverer）
 
 | 字段 | 值 |
 |---|---|
+| preset id | `superagent-wish-discoverer` |
 | 用途 | 探索选项、发散思路、挑战假设 |
-| 输入 | 探索性 prompt（开放式） |
+| 输入 | exploratory prompt（开放式） |
 | 输出 | 想法、选项、分析 |
-| 副作用约束 | 不允许有持久副作用 |
+| 副作用约束 | 不给写入工具，不能产生持久副作用 |
 
 ### 执行者（implementer）
 
 | 字段 | 值 |
 |---|---|
+| preset id | `superagent-wish-implementer` |
 | 用途 | 按 task spec 产出交付物 |
-| 输入 | task spec（含目标、范围、mandate 授权列表） |
+| 输入 | task spec（目标、范围、上下文、交付物） |
 | 输出 | 文件、代码、内容等可交付物 |
-| 副作用约束 | 允许有持久副作用；mandate 项须在 task spec 中列明 |
+| 副作用约束 | 有写入工具；写入范围由 task spec 的 `scope` 限定 |
 
 ---
 
-## 三、授权等级
+## 三、工具边界
 
-| 等级 | 含义 |
+| 工具 | 启发者 | 执行者 |
+|---|---|---|
+| `read` | 有 | 有 |
+| `glob` | 有 | 有 |
+| `grep` | 有 | 有 |
+| `web_search` | 有 | 有 |
+| `web_fetch` | 有 | 有 |
+| `write` | 无 | 有 |
+| `edit` | 无 | 有 |
+| `bash` | 无 | 有 |
+| `todo_write` | 有 | 有 |
+
+启发者不写文件，靠 preset 的工具白名单保证，不靠提示词。
+
+---
+
+## 四、与 DSH 的接线
+
+| 项目 | 方式 |
 |---|---|
-| **free** | Worker 在任务范围内可自主使用，无需在 task spec 中列出 |
-| **mandate** | 须在 task spec 的授权列表中显式列出；总控在派发确认点一并呈给 wish |
-| **off** | 此 Worker 类型不可使用该能力 |
-
-**mandate 的执行机制**：当前运行时（Hermes 单 session 模式）靠 prompt 纪律实现，没有架构保障。总控在派发前的确认点须把 mandate 项列在确认消息里。Worker 收到的 task spec 中须包含已授权的 mandate 列表，否则不得调用对应能力。
-
----
-
-## 四、能力授权矩阵
-
-能力来源见 `plugin-manifest.md`。
-
-| 能力 | 来源 | 启发者 | 执行者 |
-|---|---|---|---|
-| skills-local | `skills-local` | free | free |
-| skills-third | `skills-third` | free | free |
-| memory recall | `memory-hindsight` op: recall | free | free |
-| memory retain | `memory-hindsight` op: retain | off | mandate |
-| browser-detect | `browser-detect` | free | free |
-| browser-runtime | `browser-runtime` | off | mandate |
-| office 读 | `office-skills` op: read | free | free |
-| office 写 | `office-skills` op: write | off | mandate |
-| 文件读取 `~/AI/` | — | free | free |
-| 文件写入 `~/AI/docs/` `~/AI/repos/` | — | off | free |
-| 文件写入 `~/AI/` 其他路径 | — | off | mandate |
-| web 搜索/抓取 | — | free | free |
+| preset 注册 | `ctx.agentPresets.register({ id, name, description, order, plugins })` |
+| Worker 会话创建 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` |
+| 工作目录 | `ctx.workspaceRegistry.create(cwd)` |
+| 权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` |
+| 送任务 | `agentDelivery.send(agent, requestId, text, 'queue')` |
+| 模型 | 不指定，用会话默认 |
 
 ---
 
-## 五、mandate 项格式
+## 五、设计约束
 
-执行者的 task spec 须包含 `authorization` 节，列出本次任务用到的所有 mandate 项。总控在发出派发确认消息时从此节提取并呈给 wish。
-
-示例：
-
-```
-authorization:
-  - memory-retain: 保存本次研究结论至 wish bank
-  - browser-runtime: 限 bilibili.com，下载目标视频字幕
-  - office-write: 输出 ~/AI/docs/report.docx
-```
-
-未在 `authorization` 节列出的 mandate 能力，Worker 不得使用。
-
----
-
-## 六、运行时接线（当前：Hermes 单 session 模式）
-
-| 项目 | 当前实现 |
-|---|---|
-| 派发方式 | `delegate_task` |
-| 上下文隔离 | 部分隔离（结果回流主 session，已知限制） |
-| mandate 核查时机 | 派发确认点（pre-dispatch） |
-| mandate 执行保障 | prompt 纪律（无架构保障） |
-
-换运行时时，只改 `composition.yaml` 的 `runtime_binding` 节，本文件其余内容不变。
-
----
-
-## 七、设计约束
-
-- Worker 类型和能力矩阵对运行时的变化免疫。
-- 只用公开格式（Markdown、YAML）。不依赖特定 harness 或运行时。
-- 能力来源的变更（例如 `memory-hindsight` 后端从 Xinference 换为 oMLX）在 `plugin-manifest.md` 中反映，不影响本文件。
+- Worker 只用 DSH 公开的 Host 服务，不依赖 dsh-superagent 的领域模型。
+- 工具边界的变更只改 `composition.yaml` 和 preset 的 `plugins` 列表，不改行为规格。
+- 换 DSH 版本时，先验证派发链路，再改 Worker 定义。

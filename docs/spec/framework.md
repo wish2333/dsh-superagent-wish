@@ -4,6 +4,8 @@
 
 实现细节、能力状态、工具路径见 `~/.agents/ENVIRONMENT.md` 和 `~/.agents/SKILLS.md`。
 
+本仓库只实现运行时层的 Partner 和 Worker；资产层、能力层是这台机器上已有的东西，本插件引用，不重建。需求编号见 `../REQUIREMENTS.md`。
+
 ---
 
 ## 目的
@@ -77,7 +79,7 @@
 
 **当前状态**：规格已定。见 `./composition-spec.md`（规格说明）和 `./composition.yaml`（机器可读配置）。
 
-Worker 类型：启发者（discoverer）、执行者（implementer）。能力授权矩阵和 mandate 确认机制见上述文件。`../impl/plugin-manifest.md` 保留为能力来源清单。
+Worker 类型：启发者（discoverer）、执行者（implementer）。两类 Worker 的差别全部落在 preset 的工具白名单上，见上述文件。`../impl/plugin-manifest.md` 列出本插件用到的 DSH Host 服务。
 
 ---
 
@@ -87,17 +89,18 @@ Worker 类型：启发者（discoverer）、执行者（implementer）。能力�
 
 **职责**：接收来自人或事件的输入，决定派给谁、怎么派，把结果带回给人。
 
-**当前实现**：Hermes 单 session 模式。
-- 任务入口：Hermes 对话 + cron 定时任务
-- 分派：`delegate_task` 子会话（上下文隔离，但结果回流主 session）
-- 已知结构性限制：Worker 结果积累在主 session 上下文；没有任务账本（Ticket）；没有独立 Watchdog
+**当前实现**：DeepSeek Harness 插件（本仓库）。
+- 任务入口：你的消息
+- 分派：`ctx.sessionController.create({ agentPreset })`，每个 Worker 一个独立会话和工作目录
+- 派发前由 Partner 暂停等确认；DSH 无强制机制
+- 已知限制：无 Watchdog，Worker 卡住时靠自报
 
-**当前状态**：**协作模式规格未写**（见 `./interaction-spec.md`，待写）。
+**当前状态**：协作模式规格见 `./interaction-spec.md`；派发技术方案见 `../impl/superagent-impl.md`。
 
 **待设计**：
-- 总控（主 Agent）的行为规格：如何锚定主题、管理上下文、分派任务、处理偏差。
-- 任务授权边界：相当于 Mandate，决定 Worker 在什么范围内可以自主行动。
-- 上下文管理策略：何时开新 session，何时 handoff，如何避免主 session 变重。
+- 文件入口的巡查周期和文件夹名单（依赖 cron，后续接入）。
+- 记忆层的跨会话延续。
+- Watchdog 的实现方式。
 
 ---
 
@@ -117,6 +120,6 @@ Worker 类型：启发者（discoverer）、执行者（implementer）。能力�
 来自原始调研文档（已归档，不在本仓库），这里是约束，不是建议：
 
 1. **资产用公开格式，任务跑在可替换的运行时上。** 资产层不依赖任何特定 harness。
-2. **路由只分派，不执行。** 总控不亲自跑工具，只安排任务。
+2. **路由只分派，不执行。** Partner 不亲自跑工具，只安排任务。
 3. **换运行时只改组合层。** 资产层和能力层对运行时的变化免疫。
 4. **工具留下的条件只有一个：某一天变好了。** 这是每个新增组件的准入标准。
