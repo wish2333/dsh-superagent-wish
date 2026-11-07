@@ -39,6 +39,7 @@ After installation, select the **Partner** preset when starting a new session.
 ├── worker-shared.js            Prompt rules both worker roles share
 ├── tools.js                    Tool definitions and worker-kind to preset map
 ├── report.js                   Worker-side report tool
+├── report-channel.js           Host side: report relay and the waiting fallback
 ├── test/                       node:test suite against a fake Host context
 ├── cordis.patch.yml            Bundle patch — inserts the manager entry
 ├── locale/
@@ -63,9 +64,7 @@ After installation, select the **Partner** preset when starting a new session.
 
 ## Status
 
-All three presets are registered, each from its own submodule (ADR-0002). Partner carries `partner_dispatch`; both workers carry `partner_report`. Until the report relay lands, a worker's report is recorded but not yet delivered to Partner; `npm test` covers the Host boundary.
-
-The relay and the missing-report fallback are the remaining work; see `docs/impl/superagent-impl.md`.
+All three presets are registered, each from its own submodule (ADR-0002). Partner carries `partner_dispatch`; both workers carry `partner_report`. A report is relayed into the Partner session with `steer`; `progress` does not wake Partner, and a worker turning idle without a final report produces a `waiting` report. `npm test` covers the Host boundary and the relay.
 
 ## License
 

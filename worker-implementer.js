@@ -28,6 +28,6 @@ export function apply(ctx) {
       text: IMPLEMENTER_PROMPT,
     }),
   )
-  ctx.effect(() => ctx.tools.register(REPORT_TOOL, { execute: report }))
+  ctx.effect(() => ctx.tools.register(REPORT_TOOL, { execute: (args, exec) => report(ctx, args, exec) }))
   ctx.effect(() => ctx.tools.restrict({ allow: IMPLEMENTER_TOOLS }))
 }

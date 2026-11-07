@@ -40,7 +40,9 @@ Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，
 
 **派发入口**：Partner preset 带 `partner_dispatch` 工具（参数：Worker 类型、目标、task spec 或 exploratory prompt），工具实现内部跑上表 0–6 步。两个 Worker preset 只带 `partner_report`，不带 `partner_dispatch`。
 
-**回报兜底**：监听 `agent/status`，Worker 转 `idle` 且上一轮没有 `partner_report` 时，补一条 `waiting` 回报给 Partner，对齐原型 `src/executor/dsh.ts:657-669`。
+**回报兜底**：监听 `agent/status`，Worker 转 `idle` 且上一轮没有 `partner_report`（或只有 `progress`）时，补一条 `waiting` 回报给 Partner，对齐原型 `src/executor/dsh.ts:657-669`。
+
+**实现落点**：Partner preset 加载时绑定回报通道并监听 `agent/status`；派发时把 Worker 会话登记进通道；Worker 的 `partner_report` 调通道的 `record`，通道按 `worker|turn|state|summary` 去重后以 `steer` 投递给 Partner 会话。
 
 插件声明的依赖：
 

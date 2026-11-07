@@ -21,7 +21,8 @@
     "worker-shared.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "report-channel.js"
   ],
   "dsh": {
     "bundle": {

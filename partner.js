@@ -7,6 +7,7 @@
 
 export const inject = ['systemPrompt', 'tools']
 
+import { createReportChannel } from './report-channel.js'
 import { DISPATCH_TOOL, WORKER_KINDS } from './tools.js'
 
 export { DISPATCH_TOOL } from './tools.js'
@@ -20,6 +21,22 @@ function failed(reason) {
  * Starts a worker through the seven-step chain in `docs/impl/superagent-impl.md`.
  * Each step is its own statement so a test can assert the order.
  */
+/**
+ * The Partner half of the report channel: remembers this session as Partner and
+ * every dispatched worker, then relays a worker's report into this session.
+ * @returns the channel, or undefined when the Host exposes no session identity
+ */
+export function bindReportChannel(ctx) {
+  if (!ctx.tools || typeof ctx.on !== 'function') return undefined
+  const sessionId = ctx.session ? ctx.session.id : undefined
+  const channel = createReportChannel({
+    getPartnerAgent: () => (ctx.agents ? ctx.agents.get(sessionId) : undefined),
+  })
+  if (sessionId) channel.configure({ partnerSessionId: sessionId })
+  ctx.effect(() => ctx.on('agent/status', (payload) => channel.onStatus(payload)))
+  return channel
+}
+
 export async function dispatch(ctx, args) {
   const preset = WORKER_KINDS[args.kind]
   if (preset === undefined) {
@@ -46,6 +63,7 @@ export async function dispatch(ctx, args) {
     const agent = resolved.agent
     permissionPresets.set(agent.session, 'danger-full-access')
     await sessionController.rename({ sessionId, title: args.title })
+    if (ctx.reportChannel) ctx.reportChannel.track(sessionId)
     await agent.followup({ role: 'user', content: [{ type: 'text', text: args.body }] })
 
     return {
@@ -150,5 +168,6 @@ export function apply(ctx) {
       text: ROLE_SECTION_TEXT,
     }),
   )
-  ctx.effect(() => ctx.tools.register(DISPATCH_TOOL, { execute: dispatch }))
+  ctx.effect(() => ctx.tools.register(DISPATCH_TOOL, { execute: (args) => dispatch(ctx, args) }))
+  ctx.reportChannel = bindReportChannel(ctx)
 }
