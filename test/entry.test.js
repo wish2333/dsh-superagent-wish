@@ -13,7 +13,7 @@ test('apply opens the working unit tables on the plugin scope', async () => {
   await openStore(host.ctx)
   const [spec] = medium.specs()
   assert.equal(spec.name, 'working_units')
-  assert.deepEqual(Object.keys(spec.tables).sort(), ['assignments', 'inputs', 'mandates', 'working_units'])
+  assert.deepEqual(Object.keys(spec.tables).sort(), ['assignments', 'inputs', 'mandates', 'source_events', 'working_units'])
 })
 
 test('the opened domain is closed when the plugin unloads', async () => {

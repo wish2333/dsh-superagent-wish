@@ -16,8 +16,11 @@
  * wait.
  */
 
+import { createHash } from 'node:crypto'
 import { readdir, stat } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
+import { sharedPolicy } from './policy.js'
+import { sharedStore } from './working-units.js'
 
 /** Config block id of the file source. */
 export const FILES = 'files'
@@ -48,6 +51,17 @@ export const MAX_EVERY_SECONDS = 86_400
 
 /** The patrol period a schedule source is started with before the setup tool sets one. */
 export const DEFAULT_EVERY_SECONDS = 900
+
+/** A short stable key over a string, so a record can name one observation in its id. */
+const hash = (value) => createHash('sha256').update(value).digest('hex').slice(0, 12)
+
+/** The id of a patrol at `at` over `key`: the instant and the observation, and a suffix when the store already holds it. */
+function uniqueId(at, key, store) {
+  const base = `patrol:${at}:${hash(key)}`
+  let id = base
+  for (let n = 2; store.event(id); n += 1) id = `${base}#${n}`
+  return id
+}
 
 /** A configuration the source refuses; the message names the field that is wrong. */
 export class ConfigInvalid extends Error {
@@ -166,6 +180,10 @@ function fileEvent(directory, name, info, types) {
   return {
     id: kind === 'ignored' ? `ignored:${path}` : `file:${path}:${info.size}:${Math.trunc(info.mtimeMs)}`,
     kind,
+    // A read file waits for its judgement; one the saved setup ignores is dropped as it is read.
+    status: kind === 'ignored' ? 'dropped' : 'pending',
+    ...(kind === 'ignored' ? { reason: 'The saved setup ignores this file type, so it was not judged.' } : {}),
+    judgedAt: kind === 'ignored' ? new Date(info.mtimeMs).toISOString() : undefined,
     // The identity a processed file keeps: the same path, unchanged in size and modification time, is the same file.
     ref: path,
     key: `${path}|${info.size}|${Math.trunc(info.mtimeMs)}`,
@@ -254,4 +272,188 @@ export function fileText(event, type) {
     `Name: ${where}. Size: ${event.size} bytes. Type rule: ${type?.match ?? 'none'} — default handling ${event.handling}.`,
     type?.note ? `What the saved setup says about this type: ${type.note}` : '',
   ].filter(Boolean).join('\n')
+}
+
+// --- the sources on a Host ---------------------------------------------------
+
+/**
+ * Read one source's events now and record the new ones.
+ *
+ * A source that is off, or that watches nothing yet, reads nothing. Each event
+ * is stored under a stable id, so reading the same place twice records one row,
+ * and a file whose size or modification time changed is a new event.
+ *
+ * @param ctx the context the directories are read with
+ * @param store the open working-unit tables
+ * @param id the source id
+ * @param block the source's config block
+ * @returns the events this read recorded, in order
+ */
+export async function run(ctx, store, id, block) {
+  if (!block?.enabled || id !== FILES) return []
+  const written = []
+  for (const directory of block.config.directories) {
+    for (const event of await readDirectory(ctx, directory, block.config.types)) {
+      const row = { ...event, source: FILES, text: fileText(event, typeOf(block.config.types, event.ref)) }
+      const { event: stored, fresh } = await store.observe(row)
+      if (fresh) written.push(stored)
+    }
+  }
+  return written
+}
+
+/** How often the file source reads its directories, in milliseconds. */
+export const FILE_POLL_MS = 2000
+
+/** The pollers running on each medium, so a test reads the directories now instead of waiting for the next period. */
+const pollers = new WeakMap()
+
+/**
+ * Read every source's directories now, as the next poll would.
+ * @param ctx the context the stores open on
+ */
+export async function poll(ctx) {
+  const running = pollers.get(ctx.storageDomain)?.read
+  return running ? running() : []
+}
+
+/** The task title the schedule source creates. */
+export const PATROL_TITLE = 'superagent-wish: patrol watched directories'
+
+/**
+ * The prompt `ctx.schedule` delivers for one patrol.
+ *
+ * The delivery wakes a Secretary conversation, so the prompt asks for one tool
+ * call and nothing else: the patrol records itself, and the Secretary talks to
+ * nobody about a period with nothing to see.
+ */
+export const PATROL_PROMPT = 'Run one partner_patrol. It records what the patrol observed and returns; do not reply to wish or start any other work.'
+
+/** The schedule state of each medium: the task id, and the period it was opened with. */
+const scheduleState = new WeakMap()
+
+/** @returns `{ id, everySeconds }` for `medium`'s schedule source, edited on the first use. */
+function stateOf(medium) {
+  if (!scheduleState.has(medium)) scheduleState.set(medium, {})
+  return scheduleState.get(medium)
+}
+
+/**
+ * Bring the schedule source's task in line with `block`.
+ *
+ * The task is created once and then edited: a new period edits the same task
+ * rather than opening a second one, and a source turned off pauses its task, so
+ * a later save of the same period does not open a second task either.
+ *
+ * @param ctx the context `ctx.schedule` reaches the Host through
+ * @param block the schedule source's config block
+ * @returns the task id now on record, or undefined when the source is off
+ */
+export async function applySchedule(ctx, block) {
+  const state = stateOf(ctx.storageDomain)
+  const schedule = ctx.schedule
+  if (!schedule) return state.id
+  if (!block?.enabled) {
+    if (state.id && !state.paused) {
+      await schedule.edit({ id: state.id, action: 'pause' }).catch(() => {})
+      state.paused = true
+    }
+    return state.id
+  }
+  const everySeconds = block.config.everySeconds
+  if (state.id) {
+    if (!state.paused && state.everySeconds === everySeconds) return state.id
+    await schedule.edit({
+      id: state.id,
+      action: 'update',
+      patch: { timing: { kind: 'every', everySeconds }, active: true },
+    }).catch(() => {})
+    Object.assign(state, { everySeconds, paused: false })
+    return state.id
+  }
+  const task = await schedule.create({
+    title: PATROL_TITLE,
+    prompt: PATROL_PROMPT,
+    timing: { kind: 'every', everySeconds },
+    target: { kind: 'new_once', create: { agentPreset: 'superagent-wish-secretary' } },
+  })
+  Object.assign(state, { id: task?.id, everySeconds, paused: false })
+  return state.id
+}
+
+/**
+ * Record one patrol: what the watched directories hold, as of now.
+ *
+ * The observation opens nothing and wakes nobody. It is recorded when
+ * `report` is `always`, or when it differs from the last observation on record
+ * — a file put in a directory, or taken out of one, since the last patrol.
+ *
+ * @param ctx the context the directories are read with
+ * @param store the open working-unit tables
+ * @param block the schedule source's config block
+ * @param files the files source's config block
+ * @returns the row recorded, or undefined when this patrol is not recorded
+ */
+export async function recordPatrol(ctx, store, block, files) {
+  const every = block?.config?.everySeconds ?? DEFAULT_EVERY_SECONDS
+  const mode = block?.config?.report ?? 'change'
+  const watched = files?.enabled ? await observeDirectories(ctx, files.config) : []
+  const key = JSON.stringify(watched)
+  // Read after the directories, not before: two patrols a tick apart must not share the instant the reading took.
+  const at = new Date().toISOString()
+  const text = watched.length
+    ? watched.map((item) => (item.present
+      ? `${item.directory}: ${item.files} file(s), ${item.claimed} of a watched type`
+      : `${item.directory}: not there`)).join('\n')
+    : 'No watched directory is set, so the patrol observed nothing.'
+  const row = {
+    // The observation and its instant name the row. Two observations in one millisecond (`change`)
+    // or two recorded in one millisecond (`always`) still each get their own row.
+    id: uniqueId(at, key, store),
+    source: SCHEDULE,
+    kind: 'patrol',
+    ref: 'watched directories',
+    key,
+    status: 'recorded',
+    at,
+    text,
+    observedAt: at,
+    everySeconds: every,
+  }
+  const last = store.lastPatrol()
+  if (mode === 'change' && last && last.key === key) return undefined
+  const { event } = await store.observe(row)
+  return event
+}
+
+/**
+ * The file source as its preset row mounts it: it reads its directories on a
+ * timer, and records what changed.
+ *
+ * Why a timer rather than `ctx.schedule`: a schedule task always delivers its
+ * prompt to a conversation and wakes that turn (`dsh-schedule` lib/index.js
+ * `send`: `agent.followup(message)` and then `sessions.flush`), and its target
+ * is resolved before the task is stored (`create` → `resolveTarget(request.target
+ * ?? { kind: 'new_once' })`), so no task exists without a conversation. Reading a
+ * watched directory must record a row and wake nobody, which only the plugin's
+ * own timer can do inside `ctx.effect`.
+ */
+export function apply(ctx) {
+  const read = async () => {
+    try {
+      const store = await sharedStore(ctx)
+      const policy = await sharedPolicy(ctx)
+      return await run(ctx, store, FILES, policy.current().sources[FILES])
+    } catch (error) {
+      ctx.logger?.warn?.(`superagent-wish: the file source could not read its directories: ${String(error)}`)
+      return []
+    }
+  }
+  if (ctx.storageDomain && typeof ctx.storageDomain === 'object') pollers.set(ctx.storageDomain, { read })
+  ctx.effect(() => {
+    const timer = setInterval(() => { void read() }, FILE_POLL_MS)
+    timer.unref?.()
+    return () => clearInterval(timer)
+  })
+  return read
 }

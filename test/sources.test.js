@@ -4,7 +4,7 @@
 // stored record.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply as openManager } from '@wish2333/dsh-superagent-wish'
@@ -208,6 +208,195 @@ test('with no rule set the Secretary reads that no rule is set, and judges by no
     const section = host.callsTo('systemPrompt.section').map((item) => item.args).find((args) => args.name === secretary.SECTION.name)
     const text = await section.text({ agent: { id: SECRETARY_ID }, scope: undefined })
     assert.match(text, /no rule is set/i)
+  } finally {
+    await host.cleanup()
+  }
+})
+
+// --- the file source: intake -------------------------------------------------
+
+/** A fake Host whose clock and timers the test drives, alongside the services. */
+function fakeClock() {
+  const timers = []
+  return {
+    timers,
+    install(host) {
+      host.ctx.schedule = {
+        create(request, actorSessionId, signal) {
+          host.calls.push({ name: 'schedule.create', args: { request, actorSessionId, signal } })
+          return Promise.resolve({ id: `schedule-${timers.length}` })
+        },
+        edit(request) {
+          host.calls.push({ name: 'schedule.edit', args: request })
+          return Promise.resolve({})
+        },
+      }
+      host.ctx.effect(() => () => {
+        for (const timer of timers.splice(0)) clearInterval(timer)
+      })
+      return host
+    },
+  }
+}
+
+/** Puts a file in `directory` and returns its path. */
+async function put(directory, name, content) {
+  await mkdir(directory, { recursive: true })
+  const path = join(directory, name)
+  await writeFile(path, content)
+  return path
+}
+
+test('a file put in a watched directory is recorded as an event the Secretary judges', async () => {
+  const host = await plugin()
+  try {
+    // The file source is a preset row of its own, mounted beside the others.
+    const sources = await import('@wish2333/dsh-superagent-wish/sources')
+    sources.apply(host.ctx)
+    const inbox = join(host.base, 'inbox')
+    textOf(await call(host, 'partner_setup', {
+      principalSessionId: PRINCIPAL,
+      settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
+    }))
+    const path = await put(inbox, 'note.md', '# a note')
+    const written = await sources.poll(host.ctx)
+    assert.equal(written.length, 1)
+    const [event] = written
+    assert.equal(event.source, 'files')
+    assert.equal(event.kind, 'file')
+    assert.equal(event.ref, path)
+    assert.equal(event.status, 'pending')
+    assert.equal(event.handling, 'open')
+    // The row is on record for a Secretary that is not there yet, too.
+    assert.deepEqual(Object.keys(host.medium.contents('source_events')), [event.id])
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a file already processed is not opened twice, after a restart either', async () => {
+  const host = await plugin()
+  try {
+    const sources = await import('@wish2333/dsh-superagent-wish/sources')
+    sources.apply(host.ctx)
+    const inbox = join(host.base, 'inbox')
+    textOf(await call(host, 'partner_setup', {
+      principalSessionId: PRINCIPAL,
+      settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
+    }))
+    await put(inbox, 'note.md', '# a note')
+    assert.equal((await sources.poll(host.ctx)).length, 1)
+    assert.equal((await sources.poll(host.ctx)).length, 0, 'the second read records nothing')
+
+    // A restart: a second Host over the same medium, its own file source.
+    const rows = Object.keys(host.medium.contents('source_events'))
+    const restarted = await plugin({ base: host.base, medium: createStorageDomain(host.medium.snapshot()) })
+    try {
+      const again = await import('@wish2333/dsh-superagent-wish/sources')
+      again.apply(restarted.ctx)
+      assert.equal((await again.poll(restarted.ctx)).length, 0, 'the file is known after the restart')
+      assert.deepEqual(Object.keys(restarted.medium.contents('source_events')), rows)
+    } finally {
+      await restarted.cleanup()
+    }
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a file that changed is a new event, and one of an ignored type is recorded as dropped', async () => {
+  const host = await plugin()
+  try {
+    const sources = await import('@wish2333/dsh-superagent-wish/sources')
+    sources.apply(host.ctx)
+    const inbox = join(host.base, 'inbox')
+    textOf(await call(host, 'partner_setup', {
+      principalSessionId: PRINCIPAL,
+      settings: {
+        source: 'files',
+        config: {
+          enabled: true,
+          directories: [inbox],
+          types: [{ match: '.md', defaultHandling: 'open' }, { match: '.tmp', defaultHandling: 'ignore' }],
+        },
+      },
+    }))
+    await put(inbox, 'note.md', '# a note')
+    await put(inbox, 'draft.tmp', 'x')
+    const first = await sources.poll(host.ctx)
+    assert.deepEqual(first.map((event) => [event.kind, event.status]).sort(), [['file', 'pending'], ['ignored', 'dropped']])
+    const ignored = first.find((event) => event.kind === 'ignored')
+    assert.match(ignored.reason, /ignores this file type/)
+
+    // The note grows: same path, new identity.
+    await writeFile(join(inbox, 'note.md'), '# a note, and more')
+    const second = await sources.poll(host.ctx)
+    assert.equal(second.length, 1)
+    assert.equal(second[0].ref, join(inbox, 'note.md'))
+    assert.notEqual(second[0].id, first.find((event) => event.kind === 'file').id)
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('the schedule source seats its patrol on a ctx.schedule task and records what it observes without waking a conversation', async () => {
+  const host = await plugin()
+  try {
+    const clock = fakeClock().install(host)
+    const inbox = join(host.base, 'inbox')
+    await put(inbox, 'note.md', '# a note')
+    await put(inbox, 'other.txt', 'not a watched type')
+    textOf(await call(host, 'partner_setup', {
+      principalSessionId: PRINCIPAL,
+      settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
+    }))
+    textOf(await call(host, 'partner_setup', { principalSessionId: PRINCIPAL, settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
+
+    const created = host.callsTo('schedule.create').map((call) => call.args.request)
+    assert.equal(created.length, 1)
+    assert.equal(created[0].timing.kind, 'every')
+    assert.equal(created[0].timing.everySeconds, 300)
+    assert.equal(typeof created[0].prompt, 'string')
+    assert.ok(created[0].title)
+
+    // The period arrives: the Secretary's conversation runs the patrol tool.
+    const before = host.calls.filter((call) => ['sessionController.prompt', 'sessionController.updateQueue'].includes(call.name)).length
+    const result = await call(host, 'partner_patrol', {}, SECRETARY_ID)
+    const after = host.calls.filter((call) => ['sessionController.prompt', 'sessionController.updateQueue'].includes(call.name)).length
+    assert.equal(after, before, 'the patrol sends nothing to a conversation')
+    assert.match(textOf(result), /Patrol recorded/)
+    const patrolled = Object.values(host.medium.contents('source_events')).filter((event) => event.kind === 'patrol')
+    assert.equal(patrolled.length, 1)
+    assert.equal(patrolled[0].source, 'schedule')
+    assert.equal(patrolled[0].status, 'recorded')
+    assert.match(patrolled[0].text, /2 file\(s\), 1 of a watched type/)
+    assert.ok(clock)
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a patrol that observes nothing new writes no row, and a patrol that reports always writes one', async () => {
+  const host = await plugin()
+  try {
+    fakeClock().install(host)
+    const inbox = join(host.base, 'inbox')
+    await put(inbox, 'note.md', '# a note')
+    textOf(await call(host, 'partner_setup', {
+      principalSessionId: PRINCIPAL,
+      settings: { source: 'files', config: { enabled: true, directories: [inbox], types: [{ match: '.md', defaultHandling: 'open' }] } },
+    }))
+    textOf(await call(host, 'partner_setup', { principalSessionId: PRINCIPAL, settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
+    textOf(await call(host, 'partner_patrol', {}, SECRETARY_ID))
+    const unchanged = textOf(await call(host, 'partner_patrol', {}, SECRETARY_ID))
+    assert.match(unchanged, /nothing changed/)
+    assert.equal(Object.values(host.medium.contents('source_events')).filter((event) => event.kind === 'patrol').length, 1)
+
+    textOf(await call(host, 'partner_setup', { principalSessionId: PRINCIPAL, settings: { source: 'schedule', config: { report: 'always' } } }))
+    const recorded = textOf(await call(host, 'partner_patrol', {}, SECRETARY_ID))
+    assert.match(recorded, /Patrol recorded at/)
+    const patrols = () => Object.values(host.medium.contents('source_events')).filter((event) => event.kind === 'patrol')
+    assert.equal(patrols().length, 2, 'the always report writes a row even when nothing changed')
   } finally {
     await host.cleanup()
   }

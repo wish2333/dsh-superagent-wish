@@ -15,8 +15,32 @@
  */
 
 import { sharedPolicy } from './policy.js'
+import { recordPatrol } from './sources.js'
+import { sharedStore } from './working-units.js'
 
 export const inject = ['systemPrompt', 'agentPresets', 'sessionController']
+
+/**
+ * The one tool the Secretary calls: a patrol.
+ *
+ * The schedule source's task delivers its prompt to a Secretary conversation
+ * every period, and the prompt asks for this call. The call records what the
+ * patrol observed in the source event table and returns; it opens no working
+ * unit and sends nothing to wish.
+ */
+export const PATROL_TOOL = {
+  name: 'partner_patrol',
+  description: [
+    'Record one patrol of the watched directories. Call it when the scheduled patrol message arrives, then stop.',
+    'It records what the directories hold in the source event table, where Partner and wish read it; it opens no working unit and says nothing to wish.',
+    'It takes no arguments and has nothing to decide.',
+  ].join(' '),
+  parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+  output: {
+    schema: { type: 'object', additionalProperties: true },
+    render: (_args, value) => (Array.isArray(value?.content) ? value.content : [{ type: 'text', text: String(value) }]),
+  },
+}
 
 /** Preset id of the Partner, whose new sessions get a Secretary. */
 export const PARTNER_PRESET = 'superagent-wish-partner'
@@ -163,9 +187,31 @@ export function sectionFor(ctx) {
   }
 }
 
+/**
+ * `partner_patrol`: record one patrol, or nothing when it repeats the last one.
+ *
+ * @param ctx the Secretary context, which declares `storageDomain` and `tools`
+ * @returns the sentence the Secretary reads: a line per watched directory, or a note that nothing changed
+ */
+export async function patrol(ctx) {
+  const [store, policy] = await Promise.all([sharedStore(ctx), sharedPolicy(ctx)])
+  const current = policy.current()
+  const recorded = await recordPatrol(ctx, store, current.sources.schedule, current.sources.files)
+  const text = recorded
+    ? `Patrol recorded at ${recorded.at}. ${recorded.text}`
+    : 'Patrol recorded: nothing changed since the last one, so no new row was written.'
+  return { content: [{ type: 'text', text }] }
+}
+
 export function apply(ctx) {
   const section = sectionFor(ctx)
   ctx.effect(() => ctx.systemPrompt.section(section))
+  // A Host without the tables records no patrol; the tool is then absent rather than failing the preset.
+  if (ctx.tools) {
+    ctx.inject(['storageDomain'], (storeCtx) => {
+      storeCtx.effect(() => ctx.tools.register({ ...PATROL_TOOL, execute: () => patrol(storeCtx) }))
+    })
+  }
   ctx.on('agent/created', async ({ agent }) => {
     if (presetOf(ctx, agent) !== PARTNER_PRESET) return
     await ensureSecretary(ctx, agent)

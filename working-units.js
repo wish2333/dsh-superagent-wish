@@ -65,6 +65,7 @@ export async function openWorkingUnits(ctx) {
   const inputs = domain.table('inputs')
   const assignments = domain.table('assignments')
   const mandates = domain.table('mandates')
+  const events = domain.table('source_events')
 
   /** Read one unit with its rows, in the shape the state machine takes. */
   const read = (id) => {
@@ -190,6 +191,72 @@ export async function openWorkingUnits(ctx) {
     async read(id, inputIds) {
       const unit = read(id)
       return write(dispatch(unit, { state: 'read', inputIds, at: at() }))
+    },
+
+    /**
+     * Record one event a source observed, unless its id is already recorded.
+     *
+     * The row is written before anything judges the event, so an event that
+     * arrives while no Secretary exists is still read by the next one.
+     *
+     * @param event the event, with `id`, `source`, `kind`, `ref`, `key`,
+     *   `status`, `at`, `text` and its source's own fields
+     * @returns the stored row, and `fresh`: whether this call wrote it
+     */
+    async observe(event) {
+      const stored_ = events.get(event.id)
+      if (stored_) return { event: stored_, fresh: false }
+      const row = { ...event, at: event.at ?? at() }
+      await events.put(row.id, row)
+      return { event: row, fresh: true }
+    },
+
+    /** Every event a source recorded, oldest first. */
+    events() {
+      return [...events.entries()].map(([, event]) => event).sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
+    },
+
+    /** The events that wait for a judgement, oldest first. */
+    pendingEvents() {
+      return this.events().filter((event) => event.status === 'pending')
+    },
+
+    /**
+     * Record what a judgement decided for an event.
+     *
+     * @param id the event id
+     * @param decision `status` — `dropped` or `opened` — with `reason` and
+     *   `unitId` where they apply, and `principal`, the Partner conversation
+     *   whose Secretary decided
+     * @returns the row after the decision
+     */
+    async judgeEvent(id, decision) {
+      const event = events.get(id)
+      if (!event) throw new Error(`no source event ${id}`)
+      const row = { ...event, ...decision, judgedAt: decision.judgedAt ?? at() }
+      await events.put(id, row)
+      return row
+    },
+
+    /** One source event, or undefined. */
+    event(id) {
+      return events.get(id)
+    },
+
+    /** The last observation a patrol recorded, or undefined before the first one. */
+    lastPatrol() {
+      return this.events().filter((event) => event.kind === 'patrol').at(-1)
+    },
+
+    /**
+     * The events judged not to open a unit, newest first, and at most `limit`.
+     * @param options `limit`, the most rows to return
+     */
+    droppedEvents({ limit = 20 } = {}) {
+      return this.events()
+        .filter((event) => event.status === 'dropped')
+        .sort((a, b) => (b.judgedAt ?? b.at).localeCompare(a.judgedAt ?? a.at))
+        .slice(0, limit)
     },
 
     /** One unit with its inputs and assignments, or undefined. */

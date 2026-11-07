@@ -11,7 +11,7 @@
 
 import { advance } from './advance.js'
 import { savePolicy, sharedPolicy } from './policy.js'
-import { SOURCE_IDS, sourceBlock } from './sources.js'
+import { applySchedule, SOURCE_IDS, sourceBlock } from './sources.js'
 import { openPump, slotsFor } from './pump.js'
 import { nextToStart, slotsFrom } from './queue.js'
 import { turnEnded } from './relay.js'
@@ -170,11 +170,13 @@ export const STOP_TOOL = {
 export const LIST_TOOL = {
   name: 'partner_list',
   description: [
-    'List the working units and what each one is doing. Read-only: it changes nothing.',
+    'List the working units and what each one is doing, and the external events the Secretary judged not worth a unit. Read-only: it changes nothing.',
     'Each unit reports its name, type, state, and how long it has been in that state.',
     `States: ${LIST_STATES}.`,
     'A unit is waiting for wish when its state is waiting-for-decision or waiting-for-input; the last report it sent is shown with it.',
     'Ended units are listed too, so wish can see what was finished and when.',
+    'The dropped events are the files and patrols the Secretary judged and opened nothing for, newest first. Each shows when it was dropped, which source and file it was, and the reason as the Secretary gave it.',
+    'A Secretary that judged wrongly is visible here: wish sets the rules with partner_setup and the next event is judged by the new ones.',
   ].join(' '),
   parameters: {
     type: 'object',
@@ -183,6 +185,10 @@ export const LIST_TOOL = {
       includeEnded: {
         type: 'boolean',
         description: 'Include the units that have ended. Defaults to true; pass false to see only the open work.',
+      },
+      droppedLimit: {
+        type: 'integer',
+        description: 'How many dropped events to show at most. Defaults to 20.',
       },
     },
     required: [],
@@ -520,20 +526,50 @@ export async function setup(ctx, store, policy, args, exec) {
   } catch (error) {
     throw new Error(`the ${id} source was not saved: ${describe(error)}`)
   }
+  let scheduled = ''
+  if (id === 'schedule') {
+    try {
+      const taskId = await applySchedule(ctx, block)
+      scheduled = taskId ? ` The patrol task is ${taskId}.` : ' Its patrol task is paused.'
+    } catch (error) {
+      // The block is saved either way; the Host's refusal is what Partner reads, so it can say so.
+      scheduled = ` The Host refused the patrol task: ${describe(error)}.`
+    }
+  }
+  // The sources are merged from what is stored now, not from what was read before
+  // the Host was awaited: a second save between the two must not be undone.
   const sources = { ...policy.current().sources, [id]: block }
   const { from, to, notified } = await savePolicy(policy, store, ctx, { sources }, exec?.agent?.session)
   const line = `${id} source saved${from === to ? ' (unchanged)' : ''}: ${describeSource(id, block)}`
-  return textResult(`${line}${notified.length ? ` ${notified.length} open working unit(s) were told the policy changed.` : ''}`, { id, from, to, config: block })
+  return textResult(`${line}.${scheduled}${notified.length ? ` ${notified.length} open working unit(s) were told the policy changed.` : ''}`, { id, from, to, config: block })
 }
 
-/** `partner_list`: every unit with its state, read-only. */
+/** The list line for one dropped event: when, which event, and why it opened nothing. */
+export function describeDropped(event, now = Date.now()) {
+  const at = event.judgedAt ?? event.at
+  const what = event.source === 'files' ? `file ${event.ref}` : event.kind === 'patrol' ? 'patrol' : event.ref
+  return {
+    at,
+    source: event.source,
+    what,
+    reason: event.reason ?? 'no reason recorded',
+    since: `${since(at, now)} ago`,
+  }
+}
+
+/** `partner_list`: every unit with its state and the events the Secretary dropped, read-only. */
 export async function listUnits(store, args) {
   const units = store.list().filter((unit) => args.includeEnded !== false || unit.state !== 'ended')
   const now = Date.now()
   const lines = units.map((unit) => describeUnit(unit, now))
   const summary = lines.length ? lines.map((line) => `${line.id} ${quoted(line.name)} — ${line.type}, ${line.state} (${line.since})${line.lastReport ? `: ${line.lastReport.state} — ${line.lastReport.summary}` : ''}`).join('\n')
     : 'No working units yet.'
-  return textResult(summary, { units: lines })
+  const limit = Number.isInteger(args.droppedLimit) && args.droppedLimit >= 0 ? args.droppedLimit : 20
+  const dropped = limit === 0 ? [] : store.droppedEvents({ limit }).map((event) => describeDropped(event, now))
+  const droppedText = dropped.length
+    ? dropped.map((line) => `${line.at} ${line.source}: ${line.what} — dropped ${line.since}: ${line.reason}`).join('\n')
+    : 'No external event was dropped.'
+  return textResult(`${summary}\n\nDropped external events:\n${droppedText}`, { units: lines, dropped })
 }
 
 /**

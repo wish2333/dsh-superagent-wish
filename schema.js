@@ -167,12 +167,53 @@ const mandateRecord = record({
   basis: requiredString,
 })
 
+/**
+ * An event a source observed, and where it went.
+ *
+ * The row is written by the source as it reads the event, before anyone judges
+ * it, so an event that arrives while no Secretary exists is still on record.
+ * `status` then says what happened to it: `pending` waits for a judgement,
+ * `dropped` records that it was judged not to open a unit, `opened` names the
+ * unit it opened, and `recorded` is a patrol's observation, which opens nothing.
+ */
+const sourceEventRecord = record({
+  id: requiredString,
+  source: requiredOneOf('files', 'schedule'),
+  kind: requiredOneOf('file', 'ignored', 'patrol'),
+  // `ref` is the file's path, or the schedule source's patrol; `key` is the
+  // stable identity a file is recognised by on the next read.
+  ref: requiredString,
+  key: requiredString,
+  status: requiredOneOf('pending', 'dropped', 'opened', 'recorded'),
+  at: requiredString,
+  text: requiredString,
+  handling: optionalString,
+  size: (value, path) => {
+    if (value === undefined) return undefined
+    if (!Number.isInteger(value) || value < 0) fail(path, 'expected a byte count')
+    return value
+  },
+  mtimeMs: (value, path) => {
+    if (value === undefined) return undefined
+    if (!Number.isFinite(value)) fail(path, 'expected a modification time')
+    return value
+  },
+  observedAt: optionalString,
+  // What a judgement decided: the reason it dropped the event, or the unit it opened.
+  reason: optionalString,
+  unitId: optionalString,
+  // The Partner conversation whose Secretary judged it, and when it reached a decision.
+  principal: optionalString,
+  judgedAt: optionalString,
+})
+
 /** Record schemas by table name; the storage domain validates every stored row with them. */
 export const workingUnitTables = {
   working_units: workingUnitRecord,
   inputs: inputRecord,
   assignments: assignmentRecord,
   mandates: mandateRecord,
+  source_events: sourceEventRecord,
 }
 
 /** Domain name; must match the Host's `^[a-z][a-z0-9_]*$`. */
