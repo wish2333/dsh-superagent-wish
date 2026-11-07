@@ -444,7 +444,11 @@ export function apply(ctx, config) {
         // event must not read the unit before that write lands.
         try {
           await Promise.resolve()
-          await turnEnded(workerCtx, await store(), agent?.id, after)
+          const { outcome } = await turnEnded(workerCtx, await store(), agent?.id, after)
+          // A turn whose round ended here — with its `waiting` report or with
+          // none — gave a slot back, and a queued unit starts on it as it would
+          // after a report. A Worker that ran on, or had work left, keeps its.
+          if (outcome === 'closed') await advance(workerCtx, async () => openPump(workerCtx, await store(), () => slots))
         } catch {
           // The turn end is a best effort: its failure is logged by the relay,
           // and a status listener that threw would starve the next one.

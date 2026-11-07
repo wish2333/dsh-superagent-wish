@@ -20,6 +20,21 @@ async function pluginWith(slots) {
   return host
 }
 
+/** The Partner Agent, with an inbox that takes what a report relays to it. */
+function partnerAgent(base) {
+  const delivered = []
+  const take = (mode) => (message) => { delivered.push({ mode, message }) }
+  return {
+    id: PARTNER,
+    session: { id: PARTNER, header: { cwd: base } },
+    status: 'idle',
+    delivered,
+    followup: take('followup'),
+    steer: take('steer'),
+    cancel: (cause, options) => delivered.push({ mode: 'cancel', cause, options }),
+  }
+}
+
 /** The plugin entry over `medium`, with the Partner and implementer presets mounted. */
 async function plugin(options = {}) {
   const base = options.base ?? (await mkdtemp(join(tmpdir(), 'superagent-wish-')))
@@ -31,7 +46,7 @@ async function plugin(options = {}) {
   if (options.manager !== false) openManager(host.ctx, options.config)
   partnerModule.apply(host.ctx)
   implementer.apply(host.ctx)
-  host.setAgent(PARTNER, { id: PARTNER, session: { id: PARTNER, header: { cwd: base } } })
+  host.setAgent(PARTNER, partnerAgent(base))
   host.base = base
   host.cleanup = () => rm(base, { recursive: true, force: true })
   return host
@@ -102,6 +117,78 @@ test('a slot frees when the worker reports, and the queued unit starts then', as
     await host.cleanup()
   }
 })
+
+/**
+ * Runs one Worker turn the way the loop does: the delivery wakes the Worker,
+ * `act` is the turn's work, and the turn's end makes it idle. Returns once the
+ * turn-end listener has settled.
+ * @param options `whenIdle`, which the listener asks the Agent for its status
+ *   after this turn and after every later one
+ * @returns nothing
+ */
+async function turn(host, unitId, act = async () => {}, { whenIdle } = {}) {
+  const agent = host.ctx.agents.get(`superagent-wish-${unitId}`)
+  assert.ok(agent, `unit ${unitId} has a worker session`)
+  if (whenIdle) agent.whenIdle = whenIdle
+  await host.setStatus(agent, 'running')
+  await act()
+  await host.setStatus(agent, 'idle')
+}
+
+test('a slot frees when a worker turn ends without a report, and the queued unit starts then', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'First' })
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Second' })
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Third' })
+    assert.deepEqual(texts(host, 'superagent-wish-unit-3'), [], 'the third waits')
+
+    await turn(host, 'unit-1')
+    // The silent turn is the round's end: its slot is free, so the third starts.
+    assert.deepEqual(texts(host, 'superagent-wish-unit-3'), ['Do the job.'])
+    assert.equal(stored(host, 'unit-1').state, 'running', 'the unit is open, still able to take input')
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a turn-end waiting report frees the slot a queued dispatch starts on', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'First' })
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Second' })
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Third' })
+
+    // A progress report is not work in progress: the turn ends without an end
+    // report, and the `waiting` the turn end adds is the round's own ending.
+    await turn(host, 'unit-1', () => report(host, 'unit-1', 'progress', 'Half of the work is done.'))
+    assert.deepEqual(texts(host, 'superagent-wish-unit-3'), ['Do the job.'])
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a worker that ran on keeps its slot, and frees it at the turn end it then gets', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'First' })
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Second' })
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Third' })
+
+    // One idle event, and the Worker is already running the next turn: this
+    // end is not the round's.
+    await turn(host, 'unit-1', async () => {}, { whenIdle: async () => ({ status: 'running' }) })
+    assert.deepEqual(texts(host, 'superagent-wish-unit-3'), [], 'the slot stays booked')
+
+    // The turn that then ends with no report is the round's end, and frees it.
+    host.ctx.agents.get('superagent-wish-unit-1').whenIdle = async () => ({ status: 'idle' })
+    await turn(host, 'unit-1')
+    assert.deepEqual(texts(host, 'superagent-wish-unit-3'), ['Do the job.'])
+  } finally {
+    await host.cleanup()
+  }
+})
+
 
 test('the next queued unit starts when the queued one is stopped', async () => {
   const host = await plugin()

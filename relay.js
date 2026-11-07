@@ -106,6 +106,19 @@ export function noted(store, unit, round) {
 }
 
 /**
+ * What a Worker turn's end did to its unit:
+ *
+ * - `closed`: the round ended here — a `waiting` report was added, or the round
+ *   held neither `progress` nor a report — so the slot it held is free;
+ * - `open`: the Worker ran on, or its round still has work in hand;
+ * - `none`: the Session is no Worker, or its unit had nothing open. Nothing
+ *   here freed a slot.
+ */
+const OPEN = 'open'
+const CLOSED = 'closed'
+const NONE = 'none'
+
+/**
  * The turn end of a Worker Session: after a turn that produced no report, or
  * only `progress`, the unit gets a `waiting` report so Partner is never left
  * with a silent Worker.
@@ -118,38 +131,49 @@ export function noted(store, unit, round) {
  * @param sessionId the Session that went idle, possibly any Session of the Host
  * @param after a turn whose end comes after the caller finishes; the listener
  *   yields to it first, so a report that turn writes is the one counted
- * @returns the report added, or undefined when the Session is no Worker or needs none
+ * @returns `{ outcome, unit }`: `outcome` is `closed` for a round that ended
+ *   here, `open` for a Worker that ran on, `none` for a Session that needs no
+ *   turn end; `unit` is the unit after the turn end, when there is one
  */
 export async function turnEnded(ctx, store, sessionId, after) {
   const match = WORKER_SESSION.exec(String(sessionId ?? ''))
-  if (!match) return undefined
+  if (!match) return { outcome: NONE }
   try {
     // A Worker that is no longer idle began another turn as the event landed:
     // this turn's end is over, and the next one has its own.
     const still = await after?.()
-    if (still && still.status !== 'idle') return undefined
+    if (still && still.status !== 'idle') return { outcome: OPEN }
     const unit = store.get(match[1])
-    if (!unit || unit.workerSessionId !== sessionId) return undefined
-    if (unit.state === 'ended' || unit.state !== 'running') return undefined
+    if (!unit || unit.workerSessionId !== sessionId) return { outcome: NONE }
+    if (unit.state === 'ended' || unit.state !== 'running') return { outcome: NONE }
     const round = unit.assignments.at(-1)
-    if (round?.state !== 'running') return undefined
+    if (round?.state !== 'running') return { outcome: NONE }
     // A report written by the turn is in the store whether or not it reached
     // Partner; the turn is silent only when the store holds nothing new.
     const seen = remembered(store, unit.id)
     const state = seen?.round === round.id ? seen.state : round.report?.state
     // A `waiting` this round already sent is its report: a turn end that comes
-    // twice is still the one report, so it does not send another.
-    if (state === 'waiting' && seen?.round === round.id) return undefined
-    if (state !== undefined && !['progress', 'waiting'].includes(state)) return undefined
+    // twice is still the one report, so it does not send another. The round
+    // ended on the first, so its slot is free all the same.
+    if (state === 'waiting' && seen?.round === round.id) return { outcome: CLOSED, unit }
+    if (state !== undefined && !['progress', 'waiting'].includes(state)) return { outcome: OPEN, unit }
     const updated = await store.report(unit.id, { state: 'waiting', summary: WAITING_SUMMARY, source: 'executor' })
     memoryOf(store).set(unit.id, { round: round.id, state: 'waiting' })
-    // The turn end carries itself: the push rule would keep every executor-
-    // written `waiting` home.
-    await relayReport(ctx, updated, { state: 'waiting', summary: WAITING_SUMMARY, source: sessionId, pushes: true }, { round: round.id })
-    return updated
+    // The `waiting` is the turn's record, and it is written: the round ended
+    // there, so its slot is free whatever happens to the message below. The
+    // turn end carries itself, because the push rule would keep every executor-
+    // written `waiting` home; a Partner Session that cannot take it costs the
+    // message, never the slot.
+    try {
+      await relayReport(ctx, updated, { state: 'waiting', summary: WAITING_SUMMARY, source: sessionId, pushes: true }, { round: round.id })
+    } catch (error) {
+      ctx.logger?.warn?.(`superagent-wish: the turn end of ${sessionId} was recorded but did not reach Partner: ${String(error)}`)
+    }
+    // A `waiting` is not work in progress: the round ended with this report.
+    return { outcome: CLOSED, unit: updated }
   } catch (error) {
     ctx.logger?.warn?.(`superagent-wish: the turn end of ${sessionId} could not be recorded: ${String(error)}`)
-    return undefined
+    return { outcome: NONE }
   }
 }
 
