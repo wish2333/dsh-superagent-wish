@@ -136,3 +136,21 @@ Partner 不能直接结束工作单元。wish 说“这个活不要了”时，P
 - 跨会话的记忆。Secretary 的了解范围限于当前对话。
 - 多人、多来源、多线程订阅。
 - 界面。工作单元的状态只在会话里呈现。
+
+---
+
+## 九、实现约束
+
+本节的每一条都由一次真实运行失败换来，写在这里是因为它们改变代码的位置，不只是细节。
+
+**常驻逻辑放 manager。** 预设的 `plugins` 行只在那个预设被挂载时才加载。任何需要在“没有该预设会话时也运行”的逻辑——轮询、监听、队列泵——都必须放在 `index.js`。放在预设子模块里，它会在预设第一次被选中之前一直不存在。
+
+**判断预设看两个信号。** 桌面版先建会话、后写 preset，`agent/created` 触发时 `presetForSession` 仍为 `null`，要用 `agentPresets.composedPreset(agent.ctx)`；用户主动选预设这件事只有 `agent-preset/selected` 能捕捉到。两者都要听，创建逻辑保持幂等。
+
+**prompt section 同步返回字符串。** `systemPrompt.section` 的 `text` 会被同步调用，异步数据要在挂载时读好、变化时刷新，`text()` 只做拼接。
+
+**Host 服务先声明再读。** 未声明的读取会让整个预设挂载失败，而失败是静默的：用 `agentPresets.resolve(id)` 检查返回的 `broken`。
+
+**存储 schema 接受 `null`。** “已送达未读”这类中间态要显式写出，并补一条重载测试——`storage-domain` 在打开域时校验全部已存记录，一条不合规的记录会让整个域打不开。
+
+**调用方用真实 Agent。** 需要工作目录、模型、会话 id 时，从真实 Agent 上读，不要拼 `{ id, session: { id } }` 这样的假对象。

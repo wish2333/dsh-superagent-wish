@@ -9,6 +9,9 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 - Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- A resolved ticket keeps its `Status: resolved` line and gains an `## Answer` section: the conclusion, where it landed, and the commits
+- When a feature is finished, its directory gains an `implementation-record.md` holding the defects found by running against a real Host, the fix for each, and the verification evidence
+- `.scratch/` is tracked. `.scratch/dsh-home/` is not: it is a throwaway DSH_HOME holding credentials and dependency trees
 
 ## When a skill says "publish to the issue tracker"
 

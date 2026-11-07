@@ -16,9 +16,16 @@ A **Secretary** session is created alongside each new Partner session. It judges
 ## Requirements
 
 - DeepSeek Harness with the `agentPresets`, `systemPrompt` and `tools` Host services.
-- For dispatch: the `sessionController`, `workspaceRegistry`, `permissionPresets`, `agents` and `workingDirectory` Host services. A Worker is a separate DSH session, not a subagent (R28).
-- For the working-unit tables: the `storageDomain` Host service. A Host without it leaves the Partner tools absent and the rest of the preset mounted.
-- For the Secretary: an event-source configuration block and the `agent/created` event.
+- For the working-unit tables: `storageDomain`.
+- For dispatch: `sessionController`, `workspaceRegistry`, `permissionPresets`, `agents` and
+  `workingDirectory`. A Worker is a separate DSH session, not a subagent (R28).
+- For the Secretary: `sessionController` and the `agent-presets` registry events
+  (`agent-preset/selected`, `agent/created`).
+- For the schedule source: `schedule`. A Host without it reads no scheduled event and opens
+  no patrol task; the file source and everything else still run.
+
+A Host that lacks one of these leaves the tools that need it absent rather than failing the
+preset.
 
 ## Installation
 
@@ -36,54 +43,74 @@ After installation, select the **Partner** preset when starting a new session. T
 
 ```
 .
-├── index.js                    Manager: registers the four presets
-├── state.js                    Working unit state machine (pure)
-├── schema.js                   Record schemas and the domain spec of the four tables
-├── working-units.js            The four tables, opened over ctx.storageDomain
-├── sessions.js                 Executor: the dispatch chain, delivery, stop, model choice
-├── partner.js                  Partner preset: collaboration prompt + the four partner_* tools
-├── secretary.js                Secretary preset: judges external events, one per Partner session
+├── index.js                    Manager: registers the five presets, starts the
+│                               pollers and listeners that must outlive a preset
+├── state.js                    Working unit state machine (pure, no Host access)
+├── schema.js                   Record schemas and the domain spec of the tables
+├── working-units.js            The tables, opened over ctx.storageDomain
+├── sessions.js                 Executor: the dispatch chain, delivery, stop, model
+├── partner.js                  Partner preset: prompt + the five partner_* tools
+├── secretary.js                Secretary preset: prompt, judging tools, and the
+│                               listener that starts one per Partner session
 ├── worker.js                   partner_report, shared by both Worker presets
-├── worker-discoverer.js        启发者 preset: writes inside its own directory + partner_report
-├── worker-implementer.js       执行者 preset: write tools + partner_report
-├── test/                       node:test suite against a fake Host context
+├── worker-discoverer.js        启发者 preset
+├── worker-implementer.js       执行者 preset
+├── relay.js                    The one place a report becomes a message to Partner
+├── policy.js                   Judging rules, event-source config, policy version
+├── sources.js                  File source and schedule source
+├── judge.js                    Wakes a Secretary for each waiting event
+├── queue.js / pump.js / advance.js   Implementer slots and the dispatch queue
+├── test/                       node:test suite against a fake Host (test/host-fake.js)
 ├── cordis.patch.yml            Bundle patch — inserts the manager entry
-├── locale/
-│   ├── en.json                 Plugin metadata (English)
-│   └── zh.json                 Plugin metadata (Chinese)
-├── icon.svg                    Hub-and-spoke icon representing worker coordination
-├── docs/
-│   ├── REQUIREMENTS.md         Numbered requirement list
-│   ├── PROJECT-NEEDS.md        What the plugin is for, requirement by requirement
-│   ├── design/
-│   │   └── working-unit.md     The rewrite: roles, working-unit shape, tool surface
-│   ├── adr/                    Decision records
-│   ├── spec/
-│   │   ├── framework.md        Four-layer framework
-│   │   ├── interaction-spec.md Partner behavior spec
-│   │   ├── composition-spec.md Worker types and tool boundaries
-│   │   └── composition.yaml    Machine-readable Worker config
-│   ├── guides/
-│   │   └── dispatch-guide.md   Dispatch operations
-│   └── impl/
-│       ├── superagent-impl.md  Super-agent layer dispatch design
-│       └── plugin-manifest.md  DSH Host services used
-└── package.json
+├── locale/                     Plugin metadata (en, zh)
+├── icon.svg
+├── docs/                       Design, implementation notes, ADRs, specs, guides
+└── .scratch/                   Issue tracker: specs, tickets, implementation record
 ```
+
+`docs/design/working-unit.md` §九 lists the placement rules that real runs enforced;
+`.scratch/working-unit-rewrite/implementation-record.md` records every defect found by
+running against a real Host, with the fix for each.
 
 ## Status
 
-Five presets are registered; each is mounted from its own submodule (ADR-0002) with its tool plugins listed as preset rows (ADR-0003).
+Five presets are registered; each mounts from its own submodule (ADR-0002) with its tool
+plugins listed as preset rows (ADR-0003).
 
-A dispatch starts a **working unit**: Partner gets its id, and every later tool names that id. The unit keeps one Worker session (`superagent-wish-<unit id>`) and one directory (`<Partner directory>/superagent-wish/<unit id>`) for its whole life, so a follow-up reaches the same Worker and a title change renames the session only. All eight `partner_*` tools exist; see `docs/impl/superagent-impl.md` §3-bis for what each one does.
+A dispatch starts a **working unit**: Partner gets its id, and every later tool names that
+id instead of a Session. The unit keeps one Worker session (`superagent-wish-<unit id>`) and
+one directory (`<Partner directory>/superagent-wish/<unit id>`) for its whole life, so a
+follow-up reaches the same Worker and a title change renames the session only.
 
-Current gaps:
+What runs today, all verified in a real DSH session:
 
-- A Worker's `partner_report` is recorded on its unit, but nothing carries it to Partner yet and a turn that ends without a report gets no `waiting` report.
-- Dispatch takes no concurrency slot, so the number of implementers running at once is not limited.
-- A scheduled task is delivered by the Host into a Secretary conversation before the plugin reads anything; a Host whose delivery fails keeps the task and warns, and that patrol is lost until the next period.
+- **Dispatch, follow up, stop, list.** `partner_followup` appends input to the same unit and
+  the same Worker session; `partner_stop` ends the current round and keeps the unit and its
+  directory; `partner_list` reports each unit's name, type, state, scope and last report.
+- **Reports reach Partner.** A Worker's `partner_report` is relayed as a message whose source
+  is `agent-message` with the sender's Session id, so Partner reads "a Worker reported this".
+  `ready`, `blocked`, `failed` and questions are pushed; `progress` and `dropped` are not. A
+  turn that ends without a report gets a `waiting` report.
+- **A Secretary per Partner session.** It judges files dropped into watched directories and
+  scheduled patrols, opens a working unit when a rule says so and records each dropped event
+  with its reason.
+- **Policy version and concurrency.** Each unit records the policy version it was opened
+  under; implementer slots default to 2 and are configurable; a full queue waits instead of
+  failing.
+- **Tables survive a restart.** Units, inputs, assignments, mandates and events are stored
+  over `ctx.storageDomain` and read back after a reload.
 
-`npm test` covers the Host boundary, the dispatch chain, the Partner tools, the two event sources and the judgement.
+Not done on purpose:
+
+- No directory-level write interception: `scope` is a behavioural limit, and a Worker that
+  leaves it is expected to report `blocked`.
+- Policy revalidation compares the whole policy version, so any rule change makes an older
+  mandate fail to revalidate. Rule-level attribution is not implemented.
+- `partner.js` is large and holds prompt, schemas, formatting and the tools; a split is
+  recorded but not done.
+
+`npm test` covers the plugin entry (presets, tools, dispatch chain, relay, event sources,
+Secretary) and the pure state machine. Tests assert Host calls and arguments only.
 
 ## License
 

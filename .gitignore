@@ -1,7 +1,10 @@
 node_modules/
 *.log
 .DS_Store
-.scratch/
 .pnpm-store/
 
 .worktrees/
+
+# The issue tracker's specs, tickets and implementation records are tracked.
+# A throwaway DSH_HOME holds credentials and dependency trees and is not.
+.scratch/dsh-home/
