@@ -4,13 +4,14 @@ import { createHost } from './host-fake.js'
 import { apply, PRESETS, presetRows } from '../index.js'
 
 const EXPECTED = [
+  { id: 'superagent-wish-sources', name: '事件源', subpath: 'sources' },
   { id: 'superagent-wish-partner', name: 'Partner', subpath: 'partner' },
   { id: 'superagent-wish-secretary', name: 'Secretary', subpath: 'secretary' },
   { id: 'superagent-wish-discoverer', name: '启发者', subpath: 'worker-discoverer' },
   { id: 'superagent-wish-implementer', name: '执行者', subpath: 'worker-implementer' },
 ]
 
-test('the manager registers the four presets in order', async () => {
+test('the manager registers the five presets in order', async () => {
   const host = createHost()
   apply(host.ctx)
   const registrations = host.callsTo('agentPresets.register').map((call) => call.args)

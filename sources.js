@@ -289,12 +289,17 @@ export function fileText(event, type) {
  * @param block the source's config block
  * @returns the events this read recorded, in order
  */
-export async function run(ctx, store, id, block) {
+export async function run(ctx, store, id, block, { principal } = {}) {
   if (!block?.enabled || id !== FILES) return []
   const written = []
   for (const directory of block.config.directories) {
     for (const event of await readDirectory(ctx, directory, block.config.types)) {
-      const row = { ...event, source: FILES, text: fileText(event, typeOf(block.config.types, event.ref)) }
+      const row = {
+        ...event,
+        source: FILES,
+        ...(principal ? { principal } : {}),
+        text: fileText(event, typeOf(block.config.types, event.ref)),
+      }
       const { event: stored, fresh } = await store.observe(row)
       if (fresh) written.push(stored)
     }
@@ -443,7 +448,8 @@ export function apply(ctx) {
     try {
       const store = await sharedStore(ctx)
       const policy = await sharedPolicy(ctx)
-      return await run(ctx, store, FILES, policy.current().sources[FILES])
+      const current = policy.current()
+      return await run(ctx, store, FILES, current.sources[FILES], { principal: current.principal })
     } catch (error) {
       ctx.logger?.warn?.(`superagent-wish: the file source could not read its directories: ${String(error)}`)
       return []

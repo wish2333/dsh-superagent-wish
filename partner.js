@@ -10,6 +10,7 @@
  */
 
 import { advance } from './advance.js'
+import { reannotate, setPrincipal } from './judge.js'
 import { savePolicy, sharedPolicy } from './policy.js'
 import { applySchedule, SOURCE_IDS, sourceBlock } from './sources.js'
 import { openPump, slotsFor } from './pump.js'
@@ -275,7 +276,10 @@ function guarded(body) {
  * unit is recorded only after the Worker opened, so a failed dispatch leaves no
  * unit behind.
  */
-export async function dispatch(ctx, store, policy, slots, args, exec) {
+export async function dispatch(ctx, store, policy, slots, args, exec, options = {}) {
+  // A dispatch from Partner's own conversation names wish as its origin; one a
+  // judgement opens names the external event that asked for it.
+  const origin = options.origin ?? 'wish'
   const session = exec?.agent?.id
   if (!session) {
     return refused('Dispatch refused: this call carries no calling session, so a Worker would have no one to report to.')
@@ -322,11 +326,11 @@ export async function dispatch(ctx, store, policy, slots, args, exec) {
   const candidate = { ...unit, type, assignments: [{ state: 'pending' }], state: 'running' }
   const mayStart = nextToStart([candidate], units, slots)?.id === id
   const created = mayStart
-    ? await startNow(ctx, store, { ...unit, text: body, model, policyVersion: policy.version() }, { session: exec.agent.session })
+    ? await startNow(ctx, store, { ...unit, text: body, model, policyVersion: policy.version(), source: origin }, { session: exec.agent.session })
     : await store.dispatch({
       ...unit,
       text: body,
-      source: 'wish',
+      source: origin,
       scope: title,
       strength: 'explicit',
       // The version the policy has now, so a later rule change can tell which
@@ -369,7 +373,7 @@ async function startNow(ctx, store, unit, { session }) {
   }
   const created = await store.dispatch({
     ...unit,
-    source: 'wish',
+    source: unit.source ?? 'wish',
     scope: unit.title,
     strength: 'explicit',
     basis: 'wish',
@@ -540,6 +544,9 @@ export async function setup(ctx, store, policy, args, exec) {
   // the Host was awaited: a second save between the two must not be undone.
   const sources = { ...policy.current().sources, [id]: block }
   const { from, to, notified } = await savePolicy(policy, store, ctx, { sources }, exec?.agent?.session)
+  // The events read from now on are judged for this conversation, and the ones
+  // that waited for a Secretary reach this one; an event judged since stays judged.
+  await Promise.all([sharedPolicy(ctx).then((record) => setPrincipal(ctx, record, principal)), reannotate(ctx, store, principal)])
   const line = `${id} source saved${from === to ? ' (unchanged)' : ''}: ${describeSource(id, block)}`
   return textResult(`${line}.${scheduled}${notified.length ? ` ${notified.length} open working unit(s) were told the policy changed.` : ''}`, { id, from, to, config: block })
 }

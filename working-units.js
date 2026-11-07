@@ -243,6 +243,21 @@ export async function openWorkingUnits(ctx) {
       return events.get(id)
     },
 
+    /**
+     * Record which conversation an event that still waits on a judgement is
+     * judged for. An event already judged keeps what it was judged with.
+     *
+     * @param id the event id
+     * @param principal the Partner Session id
+     */
+    async reassignEvent(id, principal) {
+      const event = events.get(id)
+      if (!event || event.status !== 'pending') return event
+      const row = { ...event, principal }
+      await events.put(id, row)
+      return row
+    },
+
     /** The last observation a patrol recorded, or undefined before the first one. */
     lastPatrol() {
       return this.events().filter((event) => event.kind === 'patrol').at(-1)

@@ -232,6 +232,9 @@ const sourcesRecord = (value, path) => {
 const policyRecord = record({
   rules: rulesList,
   sources: sourcesRecord,
+  // The Partner conversation external events are judged for; absent until a
+  // source or the rules were saved from one.
+  principal: optionalString,
   version: requiredString,
   updatedAt: requiredString,
 })

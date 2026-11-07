@@ -14,6 +14,7 @@
  * the next judgement on a running session, with no restart and no reload.
  */
 
+import { decide, DECIDE_TOOL } from './judge.js'
 import { sharedPolicy } from './policy.js'
 import { recordPatrol } from './sources.js'
 import { sharedStore } from './working-units.js'
@@ -188,6 +189,41 @@ export function sectionFor(ctx) {
 }
 
 /**
+ * The tool a judgement is written with: one event, opened as a working unit or
+ * dropped with the reason the rules give for it.
+ */
+export const DECIDE_DEFINITION = {
+  name: DECIDE_TOOL,
+  description: [
+    'Record your judgement of one external event. Call it once for each event you were given, then stop.',
+    'decision "open" starts a working unit whose source is this event, and the Worker does the work it asks for.',
+    'decision "drop" opens nothing; the reason is kept with the event, where Partner and wish read it. Dropping is the normal answer: give the rule and the fact that made it not worth a unit.',
+    'A dropped event is not a mistake of the judgement, so never say anything about it to wish.',
+  ].join(' '),
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      eventId: { type: 'string', description: 'The id of the event you are judging, exactly as the judgement message gave it.' },
+      decision: { type: 'string', enum: ['open', 'drop'], description: 'Open a working unit for it, or drop it with the reason.' },
+      reason: { type: 'string', description: 'For drop: which rule decided it and on what fact, in one sentence.' },
+      type: {
+        type: 'string',
+        enum: ['discoverer', 'implementer'],
+        description: 'For open: the worker type. Omit it to follow the type rule\'s default handling.',
+      },
+      title: { type: 'string', description: 'For open: the short name of the unit, in wish\'s words.' },
+      body: { type: 'string', description: 'For open: what the Worker reads first, with the event and what the rule asks for.' },
+    },
+    required: ['eventId', 'decision'],
+  },
+  output: {
+    schema: { type: 'object', additionalProperties: true },
+    render: (_args, value) => (Array.isArray(value?.content) ? value.content : [{ type: 'text', text: String(value) }]),
+  },
+}
+
+/**
  * `partner_patrol`: record one patrol, or nothing when it repeats the last one.
  *
  * @param ctx the Secretary context, which declares `storageDomain` and `tools`
@@ -206,10 +242,23 @@ export async function patrol(ctx) {
 export function apply(ctx) {
   const section = sectionFor(ctx)
   ctx.effect(() => ctx.systemPrompt.section(section))
-  // A Host without the tables records no patrol; the tool is then absent rather than failing the preset.
+  // A Host without the tables records no patrol and no judgement; the tools are then absent rather than failing the preset.
   if (ctx.tools) {
     ctx.inject(['storageDomain'], (storeCtx) => {
       storeCtx.effect(() => ctx.tools.register({ ...PATROL_TOOL, execute: () => patrol(storeCtx) }))
+      storeCtx.inject(['sessionController', 'workspaceRegistry', 'permissionPresets', 'agents', 'workingDirectory'], (workerCtx) => {
+        storeCtx.effect(() => workerCtx.tools.register({
+          ...DECIDE_DEFINITION,
+          execute: async (args, exec) => {
+            try {
+              const [store, policy] = await Promise.all([sharedStore(workerCtx), sharedPolicy(workerCtx)])
+              return await decide(workerCtx, store, policy, args ?? {}, exec)
+            } catch (error) {
+              return { content: [{ type: 'text', text: String(error?.message ?? error) }] }
+            }
+          },
+        }))
+      })
     })
   }
   ctx.on('agent/created', async ({ agent }) => {

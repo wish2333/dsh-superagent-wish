@@ -8,12 +8,24 @@
  */
 
 import { sharedStore } from './working-units.js'
+import { apply as applySources, applySchedule } from './sources.js'
+import { applyJudge } from './judge.js'
+import { sharedPolicy } from './policy.js'
 import { slotsFrom } from './queue.js'
 import { configureSlots, openPump, pumpFor, registeringPump } from './pump.js'
 
 export const inject = ['agentPresets', 'storageDomain']
 
 export const PRESETS = [
+  {
+    id: 'superagent-wish-sources',
+    name: '事件源',
+    description: 'Reads the watched directories and records what its files and the patrol observe',
+    order: 5,
+    subpath: 'sources',
+    // Reading a directory is all it does; the one tool it calls records the patrol.
+    tools: [],
+  },
   {
     id: 'superagent-wish-partner',
     name: 'Partner',
@@ -111,6 +123,22 @@ export function slotsOf(config) {
   return slotsFrom(config?.implementerSlots)
 }
 
+/**
+ * Put the schedule source's patrol task in line with the policy as it stands.
+ *
+ * A task survives a restart and a period edited by Partner edits that task, so
+ * this runs once on load to resume a paused one or to open the task a policy
+ * saved before the Host could open it.
+ */
+function applyScheduleFromPolicy(ctx) {
+  Promise.resolve()
+    .then(async () => {
+      const policy = await sharedPolicy(ctx)
+      await applySchedule(ctx, policy.current().sources.schedule)
+    })
+    .catch((error) => ctx.logger?.warn?.(`superagent-wish: the patrol task could not be opened: ${error.message ?? String(error)}`))
+}
+
 export function apply(ctx, config) {
   // `apply` stays synchronous like every other insert, so the opening runs on
   // its own; a caller that needs the store awaits `openStore(ctx)` itself.
@@ -130,6 +158,13 @@ export function apply(ctx, config) {
     })
     : undefined
   started?.catch((error) => ctx.logger?.warn(`superagent-wish: the dispatch queue did not start: ${error.message}`))
+  // The event sources and the judgement are mounted by their own preset rows;
+  // the manager only starts the judgement loop, which is what wakes a Secretary
+  // for an event another scope's source recorded.
+  if (ctx.storageDomain) {
+    applyJudge(ctx)
+    applyScheduleFromPolicy(ctx)
+  }
   for (const preset of PRESETS) {
     const registration = ctx.agentPresets.register({
       id: preset.id,
