@@ -592,7 +592,7 @@ test('partner_list shows the dropped events to Partner, with when, which event a
     assert.match(definition.description, /dropped/i)
     // The list of units is still read through the same tool: nothing was added to read the events.
     const names = host.callsTo('tools.register').map((item) => item.args.definition.name).sort()
-    assert.deepEqual(names, ['partner_decide', 'partner_dispatch', 'partner_followup', 'partner_list', 'partner_patrol', 'partner_report', 'partner_setup', 'partner_stop'])
+    assert.deepEqual(names, ['partner_decide', 'partner_dispatch', 'partner_followup', 'partner_list', 'partner_patrol', 'partner_read_conversation', 'partner_report', 'partner_setup', 'partner_stop'])
   } finally {
     await host.cleanup()
   }

@@ -1,7 +1,7 @@
 // Loaded through the package subpath, so a wrong `exports` entry fails here (ADR-0002).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createHost } from './host-fake.js'
+import { createHost, createStorageDomain } from './host-fake.js'
 import * as secretary from '@wish2333/dsh-superagent-wish/secretary'
 
 test('the Secretary preset adds one prompt section describing its job', async () => {
@@ -24,10 +24,14 @@ const SECRETARY = 'superagent-wish-secretary'
 
 /** Applies the module and opens the Partner Session `partnerId` as DSH does on open. */
 async function openPartner(partnerId = 'partner-1', options = {}) {
-  const host = createHost({ services: secretary.inject ?? [], ...options })
+  // The Secretary's tools open the working-unit tables and read a Session, so a
+  // Host that mounts them provides a storage domain and a Session controller.
+  const services = [...new Set([...(secretary.inject ?? []), 'storageDomain'])]
+  const host = createHost({ services, ...options })
   secretary.apply(host.ctx)
   const agent = host.setAgent(partnerId, { id: partnerId, session: { id: partnerId } })
   host.setPreset(agent.session, PARTNER)
+  host.mounts = host.callsTo('tools.register').map((item) => item.args.definition)
   host.calls.length = 0
   await host.emit('agent/created', { agent, source: 'startup' })
   return host
@@ -93,6 +97,60 @@ test('the Secretary sends no message to wish', async () => {
   for (const name of ['sessionController.prompt', 'sessionController.updateQueue']) {
     assert.deepEqual(host.callsTo(name), [], name)
   }
+})
+
+// User story 27: the Secretary reads the current conversation, so its judgement
+// is about what wish is doing now. It reads; it never writes to it.
+// User story 27: the Secretary reads the current conversation, so its judgement
+// is about what wish is doing now. It reads; it never writes to it.
+test('the Secretary reads the recent messages of the Partner conversation through its own tool', async () => {
+  const host = await openPartner()
+  // The Partner Agent's Session records its events; the test controls that log.
+  const turns = []
+  host.ctx.agents.get('partner-1').session = { id: 'partner-1', snapshotEvents: () => turns }
+  const say = (role, value) => turns.push({
+    seq: turns.length,
+    type: role === 'user' ? 'user/message' : 'assistant/message',
+    data: role === 'user'
+      ? { id: `m-${turns.length}`, role: 'user', content: [{ type: 'text', text: value }], source: { kind: 'user' } }
+      : { message: { id: `a-${turns.length}`, role: 'assistant', content: [{ type: 'text', text: value }] } },
+  })
+  say('user', 'I am cleaning up the storage layer this week.')
+  say('assistant', 'Then the inbox notes about it are worth a unit.')
+  say('user', 'Only if they touch src/storage.')
+
+  // The tool is mounted by the Secretary preset, under the name the Secretary's prompt gives.
+  const read = host.mounts.find((definition) => definition.name === 'partner_read_conversation')
+  assert.ok(read, `the Secretary mounts its read tool, not ${host.calls.map((item) => item.name).join(', ')}`)
+  const said = host.calls.length
+  const result = await read.execute({}, { agent: { id: 'partner-1-secretary' }, callId: 'c1', signal: undefined })
+  assert.deepEqual(result.content.map((block) => block.type), ['text'])
+  const text = result.content[0].text
+  assert.ok(text.includes('wish: I am cleaning up the storage layer this week.'), text)
+  assert.ok(text.includes('Partner: Then the inbox notes about it are worth a unit.'), text)
+  assert.ok(text.includes('wish: Only if they touch src/storage.'), text)
+  // Reading is all it does: no message, prompt, rename or cancel toward any Session.
+  const written = host.calls.slice(said).map((item) => item.name).filter((name) => name !== 'sessionController.resolveAgent')
+  assert.deepEqual(written, [])
+
+  // Only the last messages are read when a limit is given.
+  const last = await read.execute({ limit: 1 }, { agent: { id: 'partner-1-secretary' }, callId: 'c2', signal: undefined })
+  assert.ok(last.content[0].text.includes('Only if they touch src/storage.'))
+  assert.ok(!last.content[0].text.includes('I am cleaning up'))
+})
+
+test('the read tool says so when the conversation cannot be read, and never fails the call', async () => {
+  const host = await openPartner()
+  const read = host.mounts.find((definition) => definition.name === 'partner_read_conversation')
+  assert.ok(read, 'the Secretary mounts its read tool')
+  // The Partner Session is not open any more.
+  host.removeSession('partner-1')
+  const result = await read.execute({}, { agent: { id: 'partner-1-secretary' }, callId: 'c1', signal: undefined })
+  assert.match(result.content[0].text, /could not be read/i)
+  // A call from a Session that names no Partner conversation is refused in one sentence.
+  const other = await read.execute({}, { agent: { id: 'someone-else' }, callId: 'c2', signal: undefined })
+  assert.match(other.content[0].text, /not the secretary/i)
+  assert.doesNotMatch(other.content[0].text, /\n/)
 })
 
 test('a Secretary that cannot be started does not fail the Partner session', async () => {

@@ -14,7 +14,7 @@
  * the next judgement on a running session, with no restart and no reload.
  */
 
-import { decide, DECIDE_TOOL } from './judge.js'
+import { decide, DECIDE_TOOL, principalOf } from './judge.js'
 import { sharedPolicy } from './policy.js'
 import { recordPatrol } from './sources.js'
 import { sharedStore } from './working-units.js'
@@ -43,6 +43,110 @@ export const PATROL_TOOL = {
   },
 }
 
+/**
+ * The one read the Secretary makes: the recent messages of the Partner
+ * conversation it serves, as the talk that a judgement needs.
+ *
+ * The Partner Session is derived from the Secretary's own id by
+ * {@link principalOf}, the way a judgement finds it, so no Session id is
+ * named to anyone. The read folds the Session's recorded events into messages;
+ * nothing is appended, prompted or cancelled, and the Partner's history is
+ * unchanged.
+ */
+export const READ_CONVERSATION_TOOL = {
+  name: 'partner_read_conversation',
+  description: [
+    'Read the last messages of the Partner conversation you serve. Read-only: it writes nothing and says nothing to wish.',
+    'Each line names who said it (wish or Partner) and gives the message text.',
+    'Use it to judge whether an event is worth opening a working unit now. Call it once per judgement, with the number of messages you need.',
+  ].join(' '),
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      limit: { type: 'integer', description: 'How many recent messages to read at most. Defaults to 20.' },
+    },
+    required: [],
+  },
+  output: {
+    schema: { type: 'object', additionalProperties: true },
+    render: (_args, value) => (Array.isArray(value?.content) ? value.content : [{ type: 'text', text: String(value) }]),
+  },
+}
+
+/** The most messages one read returns, so a long conversation is a page, not the history. */
+export const READ_LIMIT = 100
+
+/** The text blocks of one recorded message, joined. */
+const textOf = (message) => (message?.content ?? [])
+  .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+  .map((block) => block.text.trim())
+  .filter(Boolean)
+  .join('\n')
+
+/** One line of a message: who said it, and its text. */
+function messageLine(event) {
+  if (event.type === 'user/message') {
+    // A relayed report or a judgement is not talk; only wish's own words are.
+    if (event.data?.source?.kind !== 'user') return undefined
+    return { who: 'wish', text: textOf(event.data) }
+  }
+  if (event.type === 'assistant/message') return { who: 'Partner', text: textOf(event.data?.message) }
+  return undefined
+}
+
+/**
+ * The last `limit` messages of a Partner Session, oldest first.
+ *
+ * The Session's recorded events are folded into messages, so a forked or
+ * re-seeded conversation reads what its log holds. Nothing is appended,
+ * prompted or steered; a missing or unreadable Session is `undefined`.
+ * @returns `{ messages, total }`, or `undefined` when the Session cannot be read
+ */
+async function recentMessages(controller, partnerId, limit) {
+  let session
+  try {
+    const resolved = await controller.resolveAgent(partnerId)
+    if ('error' in resolved) return undefined
+    session = resolved.agent?.session
+  } catch {
+    return undefined
+  }
+  const events = typeof session?.snapshotEvents === 'function' ? session.snapshotEvents() : []
+  const messages = []
+  for (const event of events) {
+    const line = messageLine(event)
+    if (line?.text) messages.push(line)
+  }
+  return { messages: messages.slice(-limit), total: messages.length }
+}
+
+/** One readable block of the conversation, or the reason it could not be read. */
+function conversationText(partnerId, read) {
+  if (!read) {
+    return `The conversation ${partnerId} could not be read: its Session is not open. Judge by the event and the rules only, and say nothing about this to wish.`
+  }
+  if (!read.messages.length) return `The conversation ${partnerId} holds no message yet.`
+  const shown = read.messages.length < read.total ? `the last ${read.messages.length} of ${read.total}` : `all ${read.total}`
+  return [`The conversation ${partnerId}, ${shown} message(s), oldest first:`, ...read.messages.map((line) => `${line.who}: ${line.text}`)].join('\n')
+}
+
+/**
+ * `partner_read_conversation`: one read of the Partner conversation.
+ *
+ * The Partner Session is the one this Secretary serves, derived from the
+ * calling Session the way every judgement is; a call from another Session is
+ * refused in one sentence.
+ */
+export async function readConversation(ctx, args, exec) {
+  const partnerId = principalOf(exec)
+  if (!partnerId) return { content: [{ type: 'text', text: 'Read refused: this call is not the secretary of any Partner conversation.' }] }
+  const wanted = Number.isInteger(args.limit) && args.limit > 0 ? args.limit : 20
+  const limit = Math.min(wanted, READ_LIMIT)
+  const read = await recentMessages(ctx.sessionController, partnerId, limit)
+  return { content: [{ type: 'text', text: conversationText(partnerId, read) }] }
+}
+
 /** Preset id of the Partner, whose new sessions get a Secretary. */
 export const PARTNER_PRESET = 'superagent-wish-partner'
 
@@ -63,7 +167,8 @@ export const SECTION = {
     '## How you see the conversation',
     '',
     'You can read the current Partner conversation, for the judgement: whether this event is worth opening',
-    'a working unit now. You read it; you do not write to it, and nothing you say enters the Partner history.',
+    'a working unit now. Call `partner_read_conversation` for the last messages, and ask for as many as the judgement needs.',
+    'You read it; you do not write to it, and nothing you say enters the Partner history.',
     '',
     '## When you speak',
     '',
@@ -246,6 +351,12 @@ export function apply(ctx) {
   if (ctx.tools) {
     ctx.inject(['storageDomain'], (storeCtx) => {
       storeCtx.effect(() => ctx.tools.register({ ...PATROL_TOOL, execute: () => patrol(storeCtx) }))
+      // The conversation is read through the Session service, so the tool is
+      // mounted only where the Host can resolve a Session.
+      storeCtx.inject(['sessionController'], (readCtx) => storeCtx.effect(() => ctx.tools.register({
+        ...READ_CONVERSATION_TOOL,
+        execute: (args, exec) => readConversation(readCtx, args ?? {}, exec),
+      })))
       storeCtx.inject(['sessionController', 'workspaceRegistry', 'permissionPresets', 'agents', 'workingDirectory'], (workerCtx) => {
         storeCtx.effect(() => workerCtx.tools.register({
           ...DECIDE_DEFINITION,
