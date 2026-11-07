@@ -73,17 +73,17 @@ After installation, select the **Partner** preset when starting a new session. T
 
 ## Status
 
-Four presets are registered; each is mounted from its own submodule (ADR-0002) with its tool plugins listed as preset rows (ADR-0003).
+Five presets are registered; each is mounted from its own submodule (ADR-0002) with its tool plugins listed as preset rows (ADR-0003).
 
-A dispatch starts a **working unit**: Partner gets its id, and every later tool names that id. The unit keeps one Worker session (`superagent-wish-<unit id>`) and one directory (`<Partner directory>/superagent-wish/<unit id>`) for its whole life, so a follow-up reaches the same Worker and a title change renames the session only. All five `partner_*` tools exist; see `docs/impl/superagent-impl.md` §3-bis for what each one does.
+A dispatch starts a **working unit**: Partner gets its id, and every later tool names that id. The unit keeps one Worker session (`superagent-wish-<unit id>`) and one directory (`<Partner directory>/superagent-wish/<unit id>`) for its whole life, so a follow-up reaches the same Worker and a title change renames the session only. All eight `partner_*` tools exist; see `docs/impl/superagent-impl.md` §3-bis for what each one does.
 
 Current gaps:
 
 - A Worker's `partner_report` is recorded on its unit, but nothing carries it to Partner yet and a turn that ends without a report gets no `waiting` report.
 - Dispatch takes no concurrency slot, so the number of implementers running at once is not limited.
-- No event source yet, so `partner_list` shows no judged external events.
+- A scheduled task is delivered by the Host into a Secretary conversation before the plugin reads anything; a Host whose delivery fails keeps the task and warns, and that patrol is lost until the next period.
 
-`npm test` covers the Host boundary, the dispatch chain, the four Partner tools and the report tool.
+`npm test` covers the Host boundary, the dispatch chain, the Partner tools, the two event sources and the judgement.
 
 ## License
 
