@@ -4,13 +4,14 @@ import { createHost } from './host-fake.js'
 import { apply, PRESETS, presetRows } from '../index.js'
 
 const EXPECTED = [
+  { id: 'superagent-wish-sources', name: '事件源', subpath: 'sources' },
   { id: 'superagent-wish-partner', name: 'Partner', subpath: 'partner' },
   { id: 'superagent-wish-secretary', name: 'Secretary', subpath: 'secretary' },
   { id: 'superagent-wish-discoverer', name: '启发者', subpath: 'worker-discoverer' },
   { id: 'superagent-wish-implementer', name: '执行者', subpath: 'worker-implementer' },
 ]
 
-test('the manager registers the four presets in order', async () => {
+test('the manager registers the five presets in order', async () => {
   const host = createHost()
   apply(host.ctx)
   const registrations = host.callsTo('agentPresets.register').map((call) => call.args)
@@ -31,4 +32,15 @@ test('only the implementer preset mounts the shell', () => {
   const byId = Object.fromEntries(PRESETS.map((preset) => [preset.id, preset]))
   assert.ok(presetRows(byId['superagent-wish-implementer']).some((row) => row.name === '@deepseek-ai/dsh-tool-bash'))
   assert.ok(!presetRows(byId['superagent-wish-discoverer']).some((row) => row.name === '@deepseek-ai/dsh-tool-bash'))
+})
+
+test('a Host with no Schedule service loads without a failed task, and the entry still registers every preset', async () => {
+  const host = createHost({ missing: ['schedule'], storageDomain: (await import('./host-fake.js')).createStorageDomain() })
+  const warned = []
+  host.ctx.logger = { warn: (message) => warned.push(String(message)) }
+  apply(host.ctx)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(host.callsTo('agentPresets.register').length, PRESETS.length)
+  assert.equal(host.callsTo('schedule.create').length, 0)
+  assert.ok(warned.every((message) => !/Invalid value/.test(message)), warned.join('\n'))
 })

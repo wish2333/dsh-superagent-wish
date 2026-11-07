@@ -4,17 +4,18 @@ import assert from 'node:assert/strict'
 import { createHost } from './host-fake.js'
 import * as secretary from '@wish2333/dsh-superagent-wish/secretary'
 
-test('the Secretary preset adds one prompt section describing its job', () => {
+test('the Secretary preset adds one prompt section describing its job', async () => {
   const host = createHost({ services: secretary.inject ?? [] })
   secretary.apply(host.ctx)
   const sections = host.callsTo('systemPrompt.section').map((call) => call.args)
   assert.equal(sections.length, 1)
   const text = sections[0].text
-  assert.equal(typeof text, 'string')
+  // The text is rendered per request, so the judging rules are the ones in force then.
+  const rendered = typeof text === 'function' ? await text({ agent: null, scope: undefined }) : text
   // Its job: judge external events, read the conversation, speak only when wish must decide,
   // and keep its conclusions in the tables.
   for (const phrase of ['judge', 'read', 'speak only when wish must decide', 'table']) {
-    assert.ok(text.includes(phrase), `the section must state "${phrase}"`)
+    assert.ok(rendered.includes(phrase), `the section must state "${phrase}"`)
   }
 })
 

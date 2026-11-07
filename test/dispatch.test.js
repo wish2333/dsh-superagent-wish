@@ -240,7 +240,7 @@ test('the partner_report tool is not one Partner mounts', async () => {
   const host = await partner()
   try {
     const names = host.callsTo('tools.register').map((call) => call.args.definition.name)
-    assert.deepEqual(names.sort(), ['partner_dispatch', 'partner_followup', 'partner_list', 'partner_stop'])
+    assert.deepEqual(names.sort(), ['partner_dispatch', 'partner_followup', 'partner_list', 'partner_setup', 'partner_stop'])
   } finally {
     await host.cleanup()
   }

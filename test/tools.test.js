@@ -85,9 +85,9 @@ for (const definition of TOOLS) {
   })
 }
 
-test('the five tools are the ones the presets mount, and each preset gets its own', () => {
+test('the six tools are the ones the presets mount, and each preset gets its own', () => {
   const mounted = (label) => TOOLS.filter((definition) => definition.label === label).map((definition) => definition.name).sort()
-  assert.deepEqual(mounted('partner'), ['partner_dispatch', 'partner_followup', 'partner_list', 'partner_stop'])
+  assert.deepEqual(mounted('partner'), ['partner_dispatch', 'partner_followup', 'partner_list', 'partner_setup', 'partner_stop'])
   assert.deepEqual(mounted('worker-discoverer'), ['partner_report'])
   assert.deepEqual(mounted('worker-implementer'), ['partner_report'])
 })

@@ -12,6 +12,14 @@ _Avoid_: 主 Agent、Router、总控、orchestrator
 Partner 新会话创建时随之创建的独立会话，判断外部进来的文件和定时事件要不要开成工作单元。不需要 wish 决定时不说话。
 _Avoid_: 秘书、助理、assistant
 
+**事件源**（`source`）:
+外部事件的入口，现在有文件入口 `files` 和定时入口 `schedule` 两个，各有一个配置块存在策略的 `sources` 里。配置和判断规则只经 `partner_setup` 修改。
+_Avoid_: 监听器、watcher、触发器
+
+**判掉**（`drop`）:
+Secretary 判断一个事件不必开成工作单元。判掉的结果写进 `source_events` 的那一行，含时间、事件和理由，`partner_list` 里查得到。
+_Avoid_: 忽略、丢弃、skip
+
 **工作单元**（`working unit`）:
 一件由 Worker 承担的事，有自己的身份、状态、输入队列和授权。Worker 会话只是它在一个时段的执行者。
 _Avoid_: 任务、job、ticket、工单

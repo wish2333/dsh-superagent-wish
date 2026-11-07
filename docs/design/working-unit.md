@@ -97,7 +97,7 @@ Secretary 是 Partner 新会话创建时随之创建的独立会话。普通会�
 
 ## 六、Partner 的工具面
 
-五个工具。
+Partner 挂五个工具，两个 Worker preset 各挂报告一个，Secretary 挂判断和巡查两个。
 
 | 工具 | 挂在哪个 preset | 作用 |
 |---|---|---|
@@ -105,7 +105,10 @@ Secretary 是 Partner 新会话创建时随之创建的独立会话。普通会�
 | `partner_followup` | Partner | 向一个工作单元追加输入，投给当前的 Worker 会话 |
 | `partner_stop` | Partner | 中止当前这一轮；工作单元仍在，之后可以追问 |
 | `partner_list` | Partner | 查工作单元的状态和被判掉的外部事件；状态含义写在这个工具的描述里 |
+| `partner_setup` | Partner | 读写判断规则与两个事件源的配置块，不打开文件手改 |
 | `partner_report` | 两个 Worker preset | Worker 报状态和摘要 |
+| `partner_decide` | Secretary | 把对一个事件的判断写回表：开成工作单元，或判掉并记下理由 |
+| `partner_patrol` | Secretary | 定时任务到点时记录一次巡查；只写表，不打扰 wish |
 
 Partner 不能直接结束工作单元。wish 说“这个活不要了”时，Partner 用 `partner_stop` 并明确说明，是否要单独的工具留到实际使用后再定。
 
@@ -116,7 +119,7 @@ Partner 不能直接结束工作单元。wish 说“这个活不要了”时，P
 按以下顺序做，先写代码，后接入口。
 
 1. 宿主侧状态机：工作单元、输入、派工、授权四张表，加测试。
-2. Partner 的五个工具与 `partner_list` 的状态描述。
+2. Partner 的工具与 `partner_list` 的状态描述。
 3. Worker 回报的推送规则，回报来源改为 `agent-message`。
 4. Secretary preset，随 Partner 新会话创建。
 5. 事件源：文件入口与定时入口，加配置块和规则文本。

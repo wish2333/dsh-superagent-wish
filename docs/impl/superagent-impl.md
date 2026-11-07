@@ -109,12 +109,15 @@ export const inject = ['systemPrompt', 'tools', 'agents']
 | `partner_dispatch` | 只有 Partner | 起一个工作单元，返回工作单元 id | 已实现 |
 | `partner_followup` | 只有 Partner | 向一个工作单元追加输入，投给当前的 Worker 会话 | 已实现 |
 | `partner_stop` | 只有 Partner | 中止当前这一轮；工作单元仍在，之后可以追问 | 已实现 |
-| `partner_list` | 只有 Partner | 查工作单元的状态和被判掉的外部事件 | 已实现，被 Secretary 判掉的外部事件等事件源（第五步） |
-| `partner_report` | 两个 Worker preset | Worker 报状态和摘要 | 已实现，只写入表；推给 Partner 见第三步 |
+| `partner_list` | 只有 Partner | 查工作单元的状态和被判掉的外部事件 | 已实现，判掉的事件带时间、事件和理由 |
+| `partner_setup` | 只有 Partner | 读写判断规则与 `files`、`schedule` 两个事件源的配置块 | 已实现 |
+| `partner_report` | 两个 Worker preset | Worker 报状态和摘要 | 已实现，推给 Partner 见第三步 |
+| `partner_decide` | Secretary | 把一个事件的判断写回表 | 已实现 |
+| `partner_patrol` | Secretary | 定时任务到点时记录一次巡查 | 已实现 |
 
 附录入按工作单元的队列投递：Worker 用 `followup` 收下一条输入，空闲时开新一轮，运行中排到下一轮。Partner 按工作单元 id 引用，不记 Worker 会话 id。
 
-**现状**：五个工具都已实现。Worker 会话 id 与工作目录都由工作单元 id 派生（`superagent-wish-<工作单元 id>`），会话被外部删除时下次投递按同一个 id 重建。回报推给 Partner 的规则与 `waiting` 兜底还没有（第三步）。
+**现状**：八个工具都已实现。Worker 会话 id 与工作目录都由工作单元 id 派生（`superagent-wish-<工作单元 id>`），会话被外部删除时下次投递按同一个 id 重建。回报推给 Partner 的规则与 `waiting` 兜底还没有（第三步）。
 
 **多任务体系**：Ticket / Input / Assignment / Mandate 这一档已经确定要做，方案见 `../design/working-unit.md`。这些模型不属于团队场景：个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
 
@@ -153,7 +156,7 @@ Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，�
 | Ticket / Mandate / Assignment / Subscription | 做，对应工作单元、输入、派工、授权四张表。订阅简化为“工作单元挂在哪条对话上” |
 | `orchestrator_*` 领域工具 | 换成 `partner_*` 工具，名字和参数按个人对话重定 |
 | 会话创建、工具白名单、消息投递 | 复用同一组 DSH Host 服务 |
-| 两个 preset（router / worker） | 四个 preset（`superagent-wish-partner` / `superagent-wish-secretary` / `superagent-wish-discoverer` / `superagent-wish-implementer`） |
+| 两个 preset（router / worker） | 五个 preset（`superagent-wish-sources` / `superagent-wish-partner` / `superagent-wish-secretary` / `superagent-wish-discoverer` / `superagent-wish-implementer`） |
 | 回报以 `steer` 送进主 Session，无报告时补 `waiting` | 同法复用 |
 
 原型的 Ticket / Input / Assignment / Mandate 不是团队专用。个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
@@ -166,7 +169,6 @@ Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，�
 |---|---|
 | 回报推送 | `partner_report` 只写入表；Partner 收不到回报，也没有 `waiting` 兜底 |
 | 并发上限 | 派发不占槽位，同时跑几个执行者无法控制 |
-| 外部事件 | 文件入口和定时都没有，`partner_list` 里也没有被判掉的事件 |
 | 策略版本 | 建活时记的是固定值 `policy-1`，规则变化不重新校验 |
 | 授权 | 越界判断只靠 Worker 自报和 Partner 核查，无运行时拦截 |
 

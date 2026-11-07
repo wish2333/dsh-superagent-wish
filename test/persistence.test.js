@@ -59,7 +59,7 @@ test('each table holds the record its relation belongs to', async () => {
 test('the store closes the domain it opened when the plugin unloads', async () => {
   const { host, medium } = await open()
   assert.equal(medium.specs().length, 1)
-  assert.deepEqual(Object.keys(medium.specs()[0].tables).sort(), ['assignments', 'inputs', 'mandates', 'working_units'])
+  assert.deepEqual(Object.keys(medium.specs()[0].tables).sort(), ['assignments', 'inputs', 'mandates', 'source_events', 'working_units'])
   host.dispose()
   assert.equal(medium.closed, true)
 })

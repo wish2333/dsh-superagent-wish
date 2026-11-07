@@ -31,13 +31,20 @@ const CURRENT = 'current'
  * The blocks the version is derived from, in this order. A block added here joins
  * the version without a change to the store or to the mandate that records it.
  */
-export const POLICY_BLOCKS = ['rules', 'sources']
+export const POLICY_BLOCKS = ['rules', 'sources', 'principal']
+
+/**
+ * The blocks a version covers: the rules, and the source configs. The principal
+ * is which conversation events are judged for, not what the rules say, so
+ * choosing it does not move the version a mandate was opened under.
+ */
+export const VERSIONED_BLOCKS = ['rules', 'sources']
 
 /**
  * The policy a Host with an empty domain starts from: no rules, no sources. A
  * policy record the store has not written yet reads as this one.
  */
-export const DEFAULT_POLICY = Object.freeze({ rules: [], sources: {} })
+export const DEFAULT_POLICY = Object.freeze({ rules: [], sources: {}, principal: undefined })
 
 /**
  * A stable serialization: object keys sorted at every depth, so two policies
@@ -61,7 +68,7 @@ function canonical(value) {
  * @returns a short hex key, stable across restarts and processes
  */
 export function policyVersion(policy) {
-  const source = POLICY_BLOCKS.map((block) => `${block}=${canonical(policy?.[block] ?? DEFAULT_POLICY[block])}`).join(';')
+  const source = VERSIONED_BLOCKS.map((block) => `${block}=${canonical(policy?.[block] ?? DEFAULT_POLICY[block])}`).join(';')
   return createHash('sha256').update(source).digest('hex').slice(0, 16)
 }
 
@@ -108,6 +115,8 @@ export function sharedPolicy(ctx) {
  * @returns `current()`, `setPolicy(blocks)`, `revalidate(mandate)` and `close()`
  */
 export async function openPolicy(ctx) {
+  // A Host without the storage medium keeps no policy; a read fails as it would anywhere else.
+  if (!ctx.storageDomain?.open) throw new Error('the Host provides no storageDomain service')
   const domain = await ctx.storageDomain.open(policyDomain)
   let closed
   const close = () => (closed ??= Promise.resolve(domain.close()))
@@ -146,9 +155,12 @@ export async function openPolicy(ctx) {
       for (const block of POLICY_BLOCKS) {
         if (blocks?.[block] !== undefined) next[block] = blocks[block]
       }
-      const to = policyVersion(next)
-      await table.put(CURRENT, { ...next, version: to, updatedAt: new Date().toISOString() })
-      return { from, to, policy: next }
+      // Every row is read back through its schema on the way in, so a block that
+      // does not fit the record is refused here rather than at the next open.
+      const record = policyTables.policy.parse({ ...next, version: policyVersion(next), updatedAt: new Date().toISOString() })
+      await table.put(CURRENT, record)
+      const to = record.version
+      return { from, to, policy: withDefaults(record) }
     },
 
     /**
