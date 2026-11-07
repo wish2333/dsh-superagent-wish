@@ -348,7 +348,6 @@ export function apply(ctx) {
     workerCtx.inject(STORE_SERVICES, (storeCtx) => {
       let opened
       const store = () => (opened ??= openWorkingUnits(storeCtx))
-      storeCtx.effect(() => () => { opened?.then((handle) => handle.close()).catch(() => {}) })
       // A Worker runs in its preset's own scope, so only a global listener sees
       // its status change: the listener reads the unit the Session id names,
       // and the turn's end is what its `whenIdle` promises.

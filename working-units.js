@@ -50,8 +50,7 @@ export class UnknownWorkingUnit extends Error {
  *
  * The caller owns the handle and closes it on unload: `ctx.effect` registers the
  * disposer here, and the store also exposes `close()` for a caller that unloads
- * before the effect runs. A store opened after a close still answers, with the
- * domain it opened — the closing destroys the medium, not the promise.
+ * before the effect runs.
  *
  * @param ctx the plugin context; it must provide `storageDomain`
  * @returns the store
@@ -92,16 +91,11 @@ export async function openWorkingUnits(ctx) {
     mandate: own.id,
   })
 
-  /**
-   * Write the rows one transition changed, before the caller sees the result.
-   * A field the unit read does not hold is not written: two handles on one
-   * domain may each have read the unit, and one of them missing the
-   * authorization must not erase the other's rows.
-   */
+  /** Write the rows one transition changed, before the caller sees the result. */
   const write = async (unit) => {
     for (const input of unit.inputs) await inputs.put(input.id, { ...input, unitId: unit.id })
     for (const assignment of unit.assignments) await assignments.put(assignment.id, { ...assignment, unitId: unit.id })
-    if (unit.mandate?.scope !== undefined) await mandates.put(unit.id, { ...unit.mandate, unitId: unit.id })
+    await mandates.put(unit.id, { ...unit.mandate, unitId: unit.id })
     const record = stored(unit)
     await units.put(record.id, record)
     return unit

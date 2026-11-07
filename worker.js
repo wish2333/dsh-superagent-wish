@@ -93,16 +93,13 @@ export async function record(ctx, store, sessionId, args, partner) {
 
   const question = String(args.question ?? '').trim() || undefined
   const updated = await store.report(unit.id, { state, summary, source: sessionId })
-  // A report that should reach Partner is carried now, as the turn it belongs
-  // to is still the Worker's; a failure to carry it leaves the record, which
-  // Partner reads when it looks.
-  // A report settles the turn it was written in, so the fallback for a silent
-  // turn sees it and adds nothing.
+  // A report settles the turn it was written in, so a turn end that follows
+  // it adds no `waiting`.
   const round = unit.assignments.at(-1)?.id
   noted(store, updated, round)
   try {
-    // No repeat is expected from the tool call itself: its id already arrived
-    // once, and a retry of it is one report.
+    // Carried as the turn it belongs to is still the Worker's. A failure to
+    // carry it leaves the record, which Partner reads when it looks.
     await relayReport(partner, updated, { state, summary, question, source: sessionId }, { round })
   } catch (error) {
     ctx.logger?.warn?.(`superagent-wish: ${unit.id}: the report did not reach Partner: ${String(error)}`)
@@ -133,7 +130,6 @@ export function mountWorker(ctx, section) {
   ctx.inject(['storageDomain'], (storeCtx) => {
     let opened
     const store = () => (opened ??= openWorkingUnits(storeCtx))
-    storeCtx.effect(() => () => { opened?.then((handle) => handle.close()).catch(() => {}) })
     // The relay reaches Partner through its Session, which the Worker preset
     // declares: a Host without it records reports and carries none.
     storeCtx.inject(['sessionController'], (reportCtx) => storeCtx.effect(() => ctx.tools.register({
