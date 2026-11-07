@@ -181,5 +181,5 @@ export function apply(ctx) {
   )
   // The channel lives in this closure: Cordis forbids assigning onto the context.
   const reportChannel = bindReportChannel(ctx)
-  ctx.effect(() => ctx.tools.register(DISPATCH_TOOL, { execute: (args, exec) => dispatch(ctx, args, exec, reportChannel) }))
+  ctx.effect(() => ctx.tools.register({ ...DISPATCH_TOOL, execute: (args, exec) => dispatch(ctx, args, exec, reportChannel) }))
 }

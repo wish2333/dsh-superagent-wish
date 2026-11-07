@@ -27,7 +27,7 @@ async function dispatchedWorker() {
 
   mountPartner(host.ctx)
   const registration = host.callsTo('tools.register')[0].args
-  const result = await registration.options.execute({ kind: 'discoverer', title: 'Explore options', body: '背景：...' }, { agent: { id: 'partner-session' } })
+  const result = await registration.definition.execute({ kind: 'discoverer', title: 'Explore options', body: '背景：...' }, { agent: { id: 'partner-session' } })
   assert.equal(result.isError, undefined)
 
   const workerSessionId = host.callsTo('sessionController.create')[0].args.sessionId

@@ -51,3 +51,20 @@ test('a worker submodule adds its prompt section and the report tool only', asyn
     assert.equal(registration.args.definition.name, 'partner_report')
   }
 })
+
+// DSH's ToolRegistrationOptions carries only `when`. An `execute` passed there is
+// silently dropped, and the tool then fails at call time with
+// "tool.execute is not a function" — the fake host accepted anything, so assert
+// the shape the real Host requires.
+test('a tool carries execute on its definition, never in the registration options', async () => {
+  for (const path of ['../partner.js', '../worker-discoverer.js', '../worker-implementer.js']) {
+    const { apply: mount } = await import(path)
+    const host = createHost()
+    mount(host.ctx)
+
+    const [registration] = host.callsTo('tools.register')
+    assert.ok(registration, `${path} registers a tool`)
+    assert.equal(typeof registration.args.definition.execute, 'function', `${path} puts execute on the definition`)
+    assert.equal(registration.args.options?.execute, undefined, `${path} leaves execute out of the options`)
+  }
+})
