@@ -4,7 +4,9 @@
  */
 
 /**
- * @param {{ services?: string[] }} [options] services beyond the always-present ones
+ * @param {{ services?: string[], resolvablePresets?: string[] }} [options]
+ *   `services` beyond the always-present ones; `resolvablePresets` are the
+ *   preset ids a Session may be created with, which `create` then echoes
  * @returns a fake Context plus the log of calls made against it
  */
 export function createHost(options = {}) {
@@ -12,6 +14,7 @@ export function createHost(options = {}) {
   const listeners = new Map()
   const agents = new Map()
   const disposers = []
+  const presets = new Map()
 
   const record = (name, args) => calls.push({ name, args })
 
@@ -20,6 +23,19 @@ export function createHost(options = {}) {
       register(definition) {
         record('agentPresets.register', definition)
         return Promise.resolve(async () => {})
+      },
+      /**
+       * The recorded preset of a Session, as `presetForSession(session)` reports
+       * it: `null` when none was selected. A Session registered with
+       * `setPreset` whose preset a test marked unreadable makes this throw, the
+       * way a registry read fails.
+       */
+      presetForSession(session) {
+        record('agentPresets.presetForSession', session)
+        const preset = presets.get(session)
+        if (preset === undefined) return null
+        if (preset.unreadable) throw new Error('read failed')
+        return preset.id
       },
     },
     systemPrompt: {
@@ -53,15 +69,43 @@ export function createHost(options = {}) {
     sessionController: {
       resolveAgent(sessionId) {
         record('sessionController.resolveAgent', sessionId)
-        return Promise.resolve({ error: { code: 'session/not-found' } })
+        const agent = agents.get(sessionId)
+        return Promise.resolve(agent ? { agent } : { error: { code: 'session/not-found' } })
       },
+      /**
+       * Creates the Session and, like the real controller, leaves it resolvable
+       * through `resolveAgent`. Returns `{ sessionId, agentPreset }`, where
+       * `agentPreset` echoes the requested preset only if a test marked it
+       * resolvable in the registry.
+       */
       create(input) {
         record('sessionController.create', input)
-        return Promise.resolve(undefined)
+        const session = { id: input.sessionId ?? 'session-created' }
+        agents.set(session.id, { id: session.id, session })
+        return Promise.resolve({
+          sessionId: session.id,
+          ...(input.agentPreset === undefined || !options.resolvablePresets?.includes(input.agentPreset) ? {} : { agentPreset: input.agentPreset }),
+        })
       },
       rename(input) {
         record('sessionController.rename', input)
         return Promise.resolve()
+      },
+      prompt(input) {
+        record('sessionController.prompt', input)
+        return Promise.resolve({})
+      },
+      updateQueue(input) {
+        record('sessionController.updateQueue', input)
+        return Promise.resolve({})
+      },
+      cancel(input) {
+        record('sessionController.cancel', input)
+        return {}
+      },
+      events(request) {
+        record('sessionController.events', request)
+        return Promise.resolve({ records: [], hasMore: false })
       },
     },
     permissionPresets: {
@@ -107,8 +151,8 @@ export function createHost(options = {}) {
   if (storageDomain) ctx.storageDomain = storageDomain.service
 
   for (const name of options.services ?? []) {
-    if (name === 'storageDomain' || !(name in ctx)) continue
-    ctx[name] = { record: (args) => record(name, args) }
+    if (name === 'storageDomain') continue
+    if (!(name in ctx)) ctx[name] = { record: (args) => record(name, args) }
   }
 
   return {
@@ -121,6 +165,15 @@ export function createHost(options = {}) {
     /** Registers a live agent the fake `agents.get` returns. */
     setAgent(id, agent) {
       agents.set(id, agent)
+      return agent
+    },
+    /**
+     * Records the preset `agentPresets.presetForSession` reports for `session`:
+     * `id` is the preset id, `null` for none selected, and `{ unreadable: true }`
+     * for a read that fails.
+     */
+    setPreset(session, preset) {
+      presets.set(session, typeof preset === 'string' || preset === null ? { id: preset } : preset)
     },
     /** Runs every disposer an effect registered, as unloading the plugin would. */
     dispose() {
