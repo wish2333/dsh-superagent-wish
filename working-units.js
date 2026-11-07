@@ -59,7 +59,7 @@ export async function openWorkingUnits(ctx) {
   const domain = await ctx.storageDomain.open(workingUnitDomain)
   let closed
   const close = () => (closed ??= Promise.resolve(domain.close()))
-  ctx.effect(() => () => close())
+  ctx.effect(() => () => { void close() })
 
   const units = domain.table('working_units')
   const inputs = domain.table('inputs')
@@ -74,24 +74,30 @@ export async function openWorkingUnits(ctx) {
     return {
       ...record,
       mandate,
-      inputs: record.inputs.map((inputId) => inputs.get(inputId)).filter(Boolean),
-      assignments: record.assignments.map((assignmentId) => assignments.get(assignmentId)).filter(Boolean),
+      inputs: (record.inputs ?? []).map((inputId) => inputs.get(inputId)).filter(Boolean),
+      assignments: (record.assignments ?? []).map((assignmentId) => assignments.get(assignmentId)).filter(Boolean),
     }
   }
+
+  /**
+   * The stored form of a unit: its own fields, and the ids of the rows it holds.
+   * The unit's `mandate` is its authorization, so the row is named by the unit id.
+   */
+  const stored = ({ inputs, assignments, undelivered, ...own }) => ({
+    ...own,
+    inputs: inputs.map((input) => input.id),
+    undelivered: undelivered ?? [],
+    assignments: assignments.map((assignment) => assignment.id),
+    mandate: own.id,
+  })
 
   /** Write the rows one transition changed, before the caller sees the result. */
   const write = async (unit) => {
     for (const input of unit.inputs) await inputs.put(input.id, { ...input, unitId: unit.id })
     for (const assignment of unit.assignments) await assignments.put(assignment.id, { ...assignment, unitId: unit.id })
     await mandates.put(unit.id, { ...unit.mandate, unitId: unit.id })
-    const { inputs: _inputs, assignments: _assignments, mandate: _mandate, ...record } = unit
-    await units.put(record.id, {
-      ...record,
-      inputs: unit.inputs.map((input) => input.id),
-      undelivered: unit.undelivered ?? [],
-      assignments: unit.assignments.map((assignment) => assignment.id),
-      mandate: unit.id,
-    })
+    const record = stored(unit)
+    await units.put(record.id, record)
     return unit
   }
 
@@ -103,7 +109,8 @@ export async function openWorkingUnits(ctx) {
       // Count past the highest stored number, so a reloaded domain continues the
       // sequence rather than repeating an id a deleted unit once held.
       const highest = [...units.keys()]
-        .map((key) => Number(/^unit-(\d+)$/.exec(key)?.[1] ?? 0))
+        .map((key) => Number(/^unit-(\d+)$/.exec(key)?.[1]))
+        .filter((number) => Number.isFinite(number))
         .reduce((a, b) => Math.max(a, b), 0)
       return `unit-${highest + 1}`
     },
