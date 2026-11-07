@@ -75,11 +75,25 @@ test('an unknown state is refused and relays nothing', () => {
 })
 
 test('the relayed text names the worker session, the state and the summary', () => {
-  assert.equal(
-    formatReport('worker-9', 'ready', 'three files'),
-    'Worker worker-9 reported ready:\n\nthree files',
-  )
-  assert.match(textOf({ content: [{ type: 'text', text: formatReport('w', 'ready', 's') }] }), /Worker w reported ready/)
+  const text = formatReport('worker-9', 'ready', 'three files')
+  assert.match(text, /worker-9/)
+  assert.match(text, /reported ready/)
+  assert.match(text, /three files/)
+})
+
+test('the relayed text names the task the worker was dispatched for', () => {
+  const text = formatReport('w-1', 'blocked', 'needs a decision', { title: 'Explore macOS', kind: 'discoverer' })
+  assert.match(text, /discoverer/)
+  assert.match(text, /Explore macOS/)
+  // Partner keeps the conclusion; the session holds the trace.
+  assert.match(text, /Read session w-1 for the full trace/)
+})
+
+test('a dispatched worker report carries its task title', () => {
+  const { reportChannel, steered } = channel()
+  reportChannel.track('worker-1', { title: 'Explore macOS', kind: 'discoverer' })
+  reportChannel.record('worker-1', 1, 'ready', 'done')
+  assert.match(textOf(steered[0]), /Explore macOS/)
 })
 
 test('no partner agent means the report is dropped, not thrown', () => {

@@ -75,7 +75,9 @@ export const REPORT_TOOL = {
       },
       summary: {
         type: 'string',
-        description: 'One short paragraph Partner can relay to wish.',
+        description:
+          'What Partner relays to wish. Name what you did, where the result is, and what is still open. '
+          + 'For blocked, give the decision you need and the options you see.',
       },
     },
     required: ['state', 'summary'],

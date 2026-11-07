@@ -17,8 +17,16 @@ import { REPORT_STATES } from './tools.js'
 export const WAITING_SUMMARY = 'Worker ended its turn without a final report.'
 
 /** The text Partner receives for one report. */
-export function formatReport(workerSessionId, state, summary) {
-  return [`Worker ${workerSessionId} reported ${state}:`, '', summary].join('\n')
+export function formatReport(workerSessionId, state, summary, task = {}) {
+  const kind = task.kind ? `${task.kind} ` : ''
+  const title = task.title ? ` "${task.title}"` : ''
+  return [
+    `Worker (${kind}session ${workerSessionId})${title} reported ${state}:`,
+    '',
+    summary,
+    '',
+    `Read session ${workerSessionId} for the full trace; do not relay it verbatim.`,
+  ].join('\n')
 }
 
 /**
@@ -31,6 +39,8 @@ export function createReportChannel(deps) {
   const reports = new Map()
   /** worker session ids this plugin dispatched or adopted */
   const workers = new Set()
+  /** worker session id -> what its task was, so a report can name it */
+  const tasks = new Map()
   /** identities already handed to Partner */
   const delivered = new Set()
   let partnerSessionId
@@ -46,7 +56,7 @@ export function createReportChannel(deps) {
     const target = partnerSessionId ?? workerId
     const agent = deps.getPartnerAgent(target)
     if (!agent || typeof agent.steer !== 'function') return false
-    const message = userMessage(formatReport(workerId, report.state, report.summary), id)
+    const message = userMessage(formatReport(workerId, report.state, report.summary, tasks.get(workerId)), id)
     agent.steer(message)
     if (deps.onRelay) deps.onRelay(message.content[0].text, id)
     return true
@@ -60,8 +70,14 @@ export function createReportChannel(deps) {
     },
 
     /** Adopts a session as a worker whose status this channel watches. */
-    track(workerSessionId) {
+    /**
+     * Adopts a dispatched worker and remembers what its reports are about.
+     * @param {string} workerSessionId session the worker runs in
+     * @param {{ title?: string, kind?: string }} [task] the task it was given
+     */
+    track(workerSessionId, task = {}) {
       workers.add(workerSessionId)
+      tasks.set(workerSessionId, { title: task.title, kind: task.kind })
     },
 
     get partnerSessionId() {

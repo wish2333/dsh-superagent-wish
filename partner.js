@@ -86,7 +86,7 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
     await sessionController.rename({ sessionId, title: args.title })
     if (reportChannel) {
       reportChannel.adoptPartner(caller)
-      reportChannel.track(sessionId)
+      reportChannel.track(sessionId, { title: args.title, kind: args.kind })
     }
     await agent.followup(userMessage(args.body))
 

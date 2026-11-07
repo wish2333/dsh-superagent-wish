@@ -137,7 +137,17 @@ Worker 类型：[启发者 / 执行者]
 | 启发者 | 提炼关键选项和盲点，整合进当前主题的需求模型，带回给你；原始输出不直接透传 |
 | 执行者 | 核查交付物是否符合 task spec；符合则汇报结果；有偏差则用偏差汇报格式（见 `../spec/interaction-spec.md`） |
 
-回报由 Worker 调 `partner_report` 提交，经队列以 `steer` 送进 Partner。
+回报由 Worker 调 `partner_report` 提交，经队列以 `steer` 送进 Partner。送进 Partner 的正文形如：
+
+```
+Worker (discoverer session superagent-wish-discoverer-mac-3f2a1b7c) "Explore macOS" reported ready:
+
+[Worker 写的摘要]
+
+Read session superagent-wish-discoverer-mac-3f2a1b7c for the full trace; do not relay it verbatim.
+```
+
+摘要的内容按状态不同，要求见 Worker 提示词「摘要写什么」一节。
 
 | 状态 | 含义 | Partner 是否带回给你 |
 |---|---|---|
