@@ -68,10 +68,12 @@ test('a dropped report ends the working unit', () => {
   assert.equal(dropped.ended.outcome, 'dropped')
 })
 
-test('a stopped assignment leaves the working unit where it was', () => {
+test('a stop ends the assignment and leaves the working unit waiting for input', () => {
   const unit = begin(UNIT, { scope: 'src/', strength: 'explicit', policyVersion: 'policy-1', basis: 'wish' })
   const stopped = dispatch(unit, { state: 'stop' })
-  assert.equal(stopped.state, 'running')
+  // A stop is not an end: the unit stays, and only its work for this round stops.
+  assert.equal(stopped.state, 'waiting-for-input')
+  assert.equal(stopped.ended, undefined)
   assert.equal(stopped.assignments[0].state, 'ended')
   assert.equal(stopped.assignments[0].endedReason, 'stopped')
 })
@@ -86,7 +88,7 @@ test('input never delivered is put back in front of the queue when its assignmen
   const unit = begin(UNIT, { scope: 'src/', strength: 'explicit', policyVersion: 'policy-1', basis: 'wish' })
   const queued = followup(unit, { text: 'First' })
   const stopped = dispatch(queued, { state: 'stop' })
-  assert.equal(stopped.state, 'running')
+  assert.equal(stopped.state, 'waiting-for-input')
   assert.deepEqual(stopped.undelivered, queued.undelivered)
 })
 
@@ -127,4 +129,24 @@ test('a report says whether Partner hears about it', () => {
   assert.equal(pushes({ state: 'progress' }), false)
   assert.equal(pushes({ state: 'waiting' }), false)
   assert.equal(pushes({ state: 'dropped' }), false)
+})
+
+test('a follow-up after a stop starts a new assignment instead of vanishing', () => {
+  const unit = begin(UNIT, { scope: 'src/', strength: 'explicit', policyVersion: 'policy-1', basis: 'wish' })
+  const stopped = dispatch(unit, { state: 'stop' })
+  const followed = followup(stopped, { text: 'Take the other direction' })
+  assert.equal(followed.state, 'running')
+  assert.equal(followed.assignments.length, 2)
+  assert.equal(followed.assignments[1].state, 'pending')
+  assert.equal(followed.assignments[0].state, 'ended')
+})
+
+test('a report after a stop does not restart the stopped assignment', () => {
+  const unit = begin(UNIT, { scope: 'src/', strength: 'explicit', policyVersion: 'policy-1', basis: 'wish' })
+  const stopped = dispatch(unit, { state: 'stop' })
+  // The cancelled turn still reports its last reading: it is recorded, and the
+  // ended assignment stays ended, so nothing looks like work in progress.
+  const reported = report(stopped, { state: 'progress', summary: 'Stopped mid-way' })
+  assert.equal(reported.assignments[0].state, 'ended')
+  assert.equal(reported.assignments[0].report.state, 'progress')
 })
