@@ -36,7 +36,7 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 | 用途 | 按 task spec 产出交付物 |
 | 输入 | task spec（目标、范围、上下文、交付物） |
 | 输出 | 文件、代码、内容等可交付物 |
-| 副作用约束 | 有写入工具；写入范围由 task spec 的 `scope` 限定 |
+| 副作用约束 | 有写入工具；运行时权限为 `danger-full-access`，`scope` 只是行为约束，无运行时强制 |
 
 ---
 
@@ -53,8 +53,9 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 | `edit` | 无 | 有 |
 | `bash` | 无 | 有 |
 | `todo_write` | 有 | 有 |
+| `partner_report` | 有 | 有 |
 
-启发者不写文件，靠 preset 的工具白名单保证，不靠提示词。
+启发者不写文件，靠 preset 的工具白名单保证，不靠提示词。执行者的写权限边界也是这张白名单，不是目录限制（ADR-0001）。
 
 ---
 
@@ -67,6 +68,8 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 | 工作目录 | `ctx.workspaceRegistry.create(cwd)` |
 | 权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` |
 | 送任务 | `agent.followup(message)`；改当前轮用 `agent.steer(message)` |
+| 回报回传 | 队列 → `agent.steer(report)` 送进 Partner；一轮结束无回报时补一条 `waiting` |
+| 派发入口 | Partner preset 的 `partner_dispatch` 工具；Worker preset 无此工具 |
 | 模型 | 不指定，用会话默认 |
 
 ---

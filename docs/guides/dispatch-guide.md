@@ -100,7 +100,7 @@ deliverables:
 
 ## 四、Worker 会话怎么起
 
-Partner 确认后按下表派发，接口细节见 `../impl/superagent-impl.md` 第二节。
+Partner 确认后调 `partner_dispatch`，工具内部按下表派发，接口细节见 `../impl/superagent-impl.md` 第二节。
 
 | 步骤 | 动作 |
 |---|---|
@@ -110,7 +110,7 @@ Partner 确认后按下表派发，接口细节见 `../impl/superagent-impl.md` 
 | 4 | `ctx.sessionController.rename({ sessionId, title })` 用任务标题命名 |
 | 5 | `agent.followup(message)` 送 exploratory prompt 或 task spec |
 
-Worker 是独立 DSH 会话，不是子代理。模型不指定，用会话默认。
+Worker 是独立 DSH 会话，不是子代理。模型不指定，用会话默认。`partner_dispatch` 只挂在 Partner preset，Worker 会话里没有这个工具。
 
 ---
 
@@ -126,16 +126,26 @@ Worker 类型：[启发者 / 执行者]
 同意吗？
 ```
 
-你确认后，Partner 才调 `sessionController.create` 起 Worker 会话。
+你确认后，Partner 才调 `partner_dispatch` 起 Worker 会话。
 
 ---
 
-## 六、整合结果
+## 六、整合回报
 
 | Worker 类型 | Partner 处理方式 |
 |---|---|
 | 启发者 | 提炼关键选项和盲点，整合进当前主题的需求模型，带回给你；原始输出不直接透传 |
 | 执行者 | 核查交付物是否符合 task spec；符合则汇报结果；有偏差则用偏差汇报格式（见 `../spec/interaction-spec.md`） |
+
+回报由 Worker 调 `partner_report` 提交，经队列以 `steer` 送进 Partner。
+
+| 状态 | 含义 | Partner 是否带回给你 |
+|---|---|---|
+| `progress` | 任务进行中 | 只在你要求时 |
+| `ready` | 交付物已按 task spec 完成 | 是 |
+| `blocked` | 需要产品决策或范围不清 | 是，按原因＋影响＋选项 |
+| `failed` | 无替代路径的工具失败或任务失败 | 是 |
+| `waiting` | 一轮结束但没有回报，兜底补发 | 是 |
 
 启发者的结果整合后，Partner 应更新需求模型，标明哪些结论来自此次探索（标注"推断"或"启发者建议"，等你确认）。
 

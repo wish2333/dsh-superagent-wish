@@ -34,9 +34,13 @@ Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，
 | 4. 设权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` | 与原型一致 |
 | 5. 命名 | `ctx.sessionController.rename({ sessionId, title })` | 标题取任务标题 |
 | 6. 送任务 | `agent` 的 `followup(message)` / `steer(message)` / `inject(message)` | 原型的 `AgentDelivery.send`（`src/app/delivery.ts:66-85`）是插件自己的类，不是 Host 服务；它用 `requestId` 去重后落到这三个方法 |
-| 7. 收结果 | 监听会话事件 | Worker 完成后由 Partner 整合 |
+| 7. 收回报 | `partner_report` 工具 → 队列 → `agent.steer(report)` | Worker 主动回报，Partner 整合后带回给 wish |
 
-`followup` 送下一轮任务，`steer` 改动当前轮，`inject` 只写入历史不唤醒会话。
+`followup` 送下一轮任务，`steer` 改动当前轮，`inject` 只写入历史不唤醒会话。回报用 `steer`，不用 `inject`：Partner 需要被唤醒才处理回报。
+
+**派发入口**：Partner preset 带 `partner_dispatch` 工具（参数：Worker 类型、目标、task spec 或 exploratory prompt），工具实现内部跑上表 0–6 步。两个 Worker preset 只带 `partner_report`，不带 `partner_dispatch`。
+
+**回报兜底**：监听 `agent/status`，Worker 转 `idle` 且上一轮没有 `partner_report` 时，补一条 `waiting` 回报给 Partner，对齐原型 `src/executor/dsh.ts:657-669`。
 
 插件声明的依赖：
 
@@ -59,6 +63,7 @@ export const inject = ['agentPresets', 'systemPrompt', 'workspaceRegistry',
 | `bash` | 不给 | 给 |
 | 只读工具（`read` / `glob` / `grep` / `web_search` / `web_fetch`） | 给 | 给 |
 | 送任务方式 | `queue` | `queue` |
+| `partner_report` | 有 | 有 |
 | 回报方式 | 会话结束时把结论带回 Partner | 会话结束时把交付物和偏差带回 Partner |
 
 启发者不能写文件，靠工具白名单保证，不靠提示词。
@@ -67,20 +72,22 @@ export const inject = ['agentPresets', 'systemPrompt', 'workspaceRegistry',
 
 ## 四、确认点
 
-Partner 在调用 `sessionController.create` 之前自行暂停，等你确认。DSH 没有强制机制，这是主 Agent 的行为约定。
+Partner 在调用 `partner_dispatch` 之前自行暂停，等你确认。DSH 没有强制机制，这是主 Agent 的行为约定。
 
 确认消息格式见 `../guides/dispatch-guide.md` 第四节。
 
 ---
 
-## 五、结果回传
+## 五、回报回传
 
-Worker 的结果回到 Partner，由 Partner 整合后交给你，不直接透传。
+Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，不直接透传。
 
 | Worker 类型 | Partner 的处理 |
 |---|---|
 | 启发者 | 提炼选项和盲点，并入当前需求模型，标「推断」或「启发者建议」 |
 | 执行者 | 核查交付物是否符合 task spec；有偏差按原因＋影响＋选项汇报 |
+
+回报用 `partner_report` 提交，状态取 `progress` / `ready` / `blocked` / `failed` / `waiting` 之一，附摘要。`progress` 只在你要求时带回；其余四种一律带回。
 
 ---
 
@@ -92,8 +99,10 @@ Worker 的结果回到 Partner，由 Partner 整合后交给你，不直接透�
 |---|---|
 | Source / Thread / Eval / Decision | 不做。触发只有你的消息 |
 | Ticket / Mandate / Assignment / Subscription | 不做 |
+| `orchestrator_*` 领域工具 | 不做。换成 `partner_dispatch` 和 `partner_report` 两个工具，见 ADR-0001 |
 | 会话创建、工具白名单、消息投递 | 复用同一组 DSH Host 服务 |
-| 两个 preset（router / worker） | 三个 preset（partner / discoverer / implementer） |
+| 两个 preset（router / worker） | 三个 preset（`superagent-wish-recruiter` / `superagent-wish-discoverer` / `superagent-wish-implementer`） |
+| 回报以 `steer` 送进主 Session，无报告时补 `waiting` | 同法复用 |
 
 原型的领域模型服务于团队事件流，本插件服务于个人对话，两者不合并。
 

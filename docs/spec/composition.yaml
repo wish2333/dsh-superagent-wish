@@ -19,6 +19,7 @@ workers:
       - web_search
       - web_fetch
       - todo_write
+      - partner_report
 
   implementer:
     label: 执行者
@@ -36,6 +37,7 @@ workers:
       - edit
       - bash
       - todo_write
+      - partner_report
 
 runtime_binding:
   dsh:
@@ -43,6 +45,8 @@ runtime_binding:
     session_creation: ctx.sessionController.create
     workspace: ctx.workspaceRegistry.create
     permission: ctx.permissionPresets.set
+    dispatch: partner_dispatch
     delivery: agent.followup
+    report_relay: agent.steer
     permission_mode: danger-full-access
     model: default
