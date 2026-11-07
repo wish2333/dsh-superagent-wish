@@ -206,7 +206,7 @@ export function apply(ctx, config) {
   // here, not in the Secretary module: a preset's rows load only when that
   // preset mounts, so a listener in `secretary.js` could never start the first
   // Secretary — it would run only after one already existed.
-  ctx.inject(['agentPresets', 'sessionController'], (secretaryCtx) => {
+  ctx.inject(['agents', 'sessionController'], (secretaryCtx) => {
     watchPartnerSessions(secretaryCtx)
   })
   for (const preset of PRESETS) {

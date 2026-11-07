@@ -218,29 +218,6 @@ export async function rulesNow(ctx) {
 }
 
 /**
- * The preset `agent` is running.
- *
- * `agent/created` fires before the Host records the selection on the Session, so
- * `presetForSession` still reads `null` there; the preset the Agent is actually
- * composed with is available on its own context from the first moment. The
- * Session's record is the fallback for a Host that composes no preset.
- * @returns the preset id, or `undefined` when neither source can tell
- */
-export function presetOf(ctx, agent) {
-  try {
-    const composed = ctx.agentPresets.composedPreset?.(agent.ctx)
-    if (composed) return composed
-  } catch {
-    // Fall through to the Session's record.
-  }
-  try {
-    return ctx.agentPresets.presetForSession(agent.session) ?? undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
  * Whether the Secretary session `sessionId` already exists. An unreadable
  * answer counts as absent only after {@link ensureSecretary} fails to create.
  * @returns `true` when the Secretary is there
@@ -401,12 +378,27 @@ export function apply(ctx) {
  * Secretary preset, so its own `apply` runs only once a Secretary session is
  * being created, and a listener there would never see the first Partner.
  *
- * @param ctx the manager context, which provides `agentPresets` and `sessionController`
- * @returns the listener's disposer
+ * The signal is `agent-preset/selected`, not `agent/created`. A Session is
+ * created first and gets its preset afterwards — in the desktop app several
+ * seconds later — so at creation neither the Session nor the Agent's
+ * composition says which preset it will run. The selection event carries the
+ * pair the judgement needs: the Session id and the preset it now runs.
+ *
+ * @param ctx the manager context, which provides `agents`, `agentPresets` and `sessionController`
+ * @returns the listeners' disposer
  */
 export function watchPartnerSessions(ctx) {
-  return ctx.on('agent/created', async ({ agent }) => {
-    if (presetOf(ctx, agent) !== PARTNER_PRESET) return
+  const start = async (sessionId) => {
+    const agent = ctx.agents.get(sessionId)
+    if (agent === undefined) return
     await ensureSecretary(ctx, agent)
+  }
+  // A preset chosen before publication, as a Session created through the API
+  // does, still arrives here; a Session created without a selection never does,
+  // which is exactly the ordinary case.
+  const stopListening = ctx.on('agent-preset/selected', async (sessionId, agentPreset) => {
+    if (agentPreset !== PARTNER_PRESET) return
+    await start(sessionId)
   })
+  return stopListening
 }

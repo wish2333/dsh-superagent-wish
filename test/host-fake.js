@@ -320,9 +320,15 @@ export function createHost(options = {}) {
     tasks() {
       return Object.fromEntries([...tasks].map(([id, task]) => [id, structuredClone(task)]))
     },
-    /** Fires a Context event, awaiting every handler. */
-    async emit(name, payload) {
-      for (const handler of listeners.get(name) ?? []) await handler(payload)
+    /**
+     * Fires a Context event, awaiting every handler.
+     *
+     * Events carry their arguments as the Host emits them: `agent/status` with
+     * the payload object, `agent-preset/selected` with the Session id and then
+     * the preset, as `dsh-agent-preset-registry` emits it.
+     */
+    async emit(name, ...args) {
+      for (const handler of listeners.get(name) ?? []) await handler(...args)
     },
     /**
      * Moves an Agent between `idle` and `running` the way the real loop does: a

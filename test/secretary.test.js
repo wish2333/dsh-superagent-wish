@@ -34,26 +34,38 @@ async function openPartner(partnerId = 'partner-1', options = {}) {
   // Secretary does.
   applyManager(host.ctx)
   secretary.apply(host.ctx)
-  const agent = host.setAgent(partnerId, { id: partnerId, session: { id: partnerId }, ctx: { agent: partnerId } })
-  // An early-preset Host answers `presetForSession` with null, as the real one does
-  // at creation, and only `composedPreset` knows the preset.
-  if (!options.earlyPreset) host.setPreset(agent.session, PARTNER)
-  if (options.earlyPreset) host.setComposedPreset(agent.ctx, PARTNER)
+  host.setAgent(partnerId, { id: partnerId, session: { id: partnerId }, ctx: { agent: partnerId } })
   host.mounts = host.callsTo('tools.register').map((item) => item.args.definition)
   host.calls.length = 0
-  await host.emit('agent/created', { agent, source: 'startup' })
+  // DSH creates the Session first and records the preset afterwards; that
+  // selection event is what tells the manager this is a Partner conversation.
+  await selectPreset(host, partnerId, options.preset ?? PARTNER)
   return host
 }
 
-test('the Partner preset is read from the Agent at creation, before the Session records it', async () => {
-  // The Host publishes `agent/created` before it writes the selection onto the
-  // Session, so `presetForSession` is null there while the Agent already runs
-  // the Partner preset. Reading only the Session would create no Secretary.
-  const host = await openPartner('partner-early', { earlyPreset: true })
+/** Records `preset` on the Session and announces the selection, as the Host does. */
+async function selectPreset(host, sessionId, preset) {
+  const agent = host.ctx.agents.get(sessionId)
+  host.setPreset(agent.session, preset)
+  await host.emit('agent-preset/selected', sessionId, preset)
+}
+
+test('the Partner preset is taken from the selection event, after the Session exists', async () => {
+  // The desktop app creates a Session and picks its preset afterwards. Nothing
+  // at creation says which preset it will run, so `agent/created` cannot decide;
+  // the selection event names the Session and the preset together.
+  const host = createHost({ services: [...new Set([...(secretary.inject ?? []), 'storageDomain'])] })
+  applyManager(host.ctx)
+  secretary.apply(host.ctx)
+  const agent = host.setAgent('partner-late', { id: 'partner-late', session: { id: 'partner-late' }, ctx: { agent: 'partner-late' } })
+  await host.emit('agent/created', { agent, source: 'startup' })
+  assert.deepEqual(host.callsTo('sessionController.create'), [], 'creation alone selects no preset, so no Secretary')
+
+  await selectPreset(host, 'partner-late', PARTNER)
   const created = host.callsTo('sessionController.create').map((call) => call.args)
-  assert.equal(created.length, 1, 'the Secretary is created for a Partner whose Session has no recorded preset yet')
+  assert.equal(created.length, 1, 'the selection creates the Secretary')
   assert.equal(created[0].agentPreset, SECRETARY)
-  assert.equal(created[0].sessionId, 'partner-early-secretary')
+  assert.equal(created[0].sessionId, 'partner-late-secretary')
 })
 
 test('a new Partner session gets one Secretary session', async () => {
@@ -65,13 +77,13 @@ test('a new Partner session gets one Secretary session', async () => {
 })
 
 test('an ordinary session gets no Secretary', async () => {
-  for (const preset of ['superagent-wish-discoverer', 'superagent-wish-implementer', null]) {
+  for (const preset of ['superagent-wish-discoverer', 'superagent-wish-implementer', 'standard']) {
     const host = createHost({ services: secretary.inject ?? [] })
     applyManager(host.ctx)
     secretary.apply(host.ctx)
     const agent = host.setAgent('ordinary-1', { id: 'ordinary-1', session: { id: 'ordinary-1' } })
-    if (preset) host.setPreset(agent.session, preset)
-    await host.emit('agent/created', { agent, source: 'startup' })
+    host.setPreset(agent.session, preset)
+    await host.emit('agent-preset/selected', 'ordinary-1', preset)
     assert.deepEqual(host.callsTo('sessionController.create'), [], `preset ${preset} must create none`)
   }
 })
