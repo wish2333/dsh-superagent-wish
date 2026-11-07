@@ -87,6 +87,13 @@ const rulesList = (value, path) => {
   }))(rule, `${path}[${index}]`))
 }
 
+/** A model a dispatch named: the provider and model id, with an optional reasoning effort. */
+const optionalModel = (value, path) => {
+  if (value === undefined) return undefined
+  const parsed = record({ provider: requiredString, model: requiredString, reasoningEffort: optionalString }).parse(value)
+  return { provider: parsed.provider, model: parsed.model, ...(parsed.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.reasoningEffort }) }
+}
+
 const reportFields = {
   state: requiredOneOf('progress', 'waiting', 'ready', 'blocked', 'failed', 'dropped'),
   summary: requiredString,
@@ -104,6 +111,9 @@ const workingUnitRecord = record({
   partnerSessionId: requiredString,
   workerSessionId: requiredString,
   directory: requiredString,
+  // The model a dispatch named, if it named one: a queued unit selects it when
+  // it starts, so the choice outlives the call that made it.
+  model: optionalModel,
   inputs: stringList,
   undelivered: stringList,
   assignments: stringList,

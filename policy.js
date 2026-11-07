@@ -82,6 +82,20 @@ function declareDomain() {
 
 export const policyDomain = declareDomain()
 
+/** One policy record per storage medium, shared by every scope, as the working unit store is. */
+const policies = new WeakMap()
+
+/**
+ * The policy record for `ctx`'s medium, opened once.
+ * @param ctx a plugin context that provides `storageDomain`
+ * @returns the shared policy record
+ */
+export function sharedPolicy(ctx) {
+  const medium = ctx.storageDomain
+  if (!policies.has(medium)) policies.set(medium, openPolicy(ctx))
+  return policies.get(medium)
+}
+
 /**
  * Open the policy record over a storage domain and return the accessors.
  *

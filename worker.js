@@ -1,4 +1,5 @@
-import { openWorkingUnits } from './working-units.js'
+import { advance } from './advance.js'
+import { sharedStore } from './working-units.js'
 
 /**
  * The part both Worker presets share: the `partner_report` tool and the report
@@ -105,17 +106,21 @@ function refused(text) {
  * @param ctx the Worker preset's context
  * @param section the preset's own prompt section
  */
-export function mountWorker(ctx, section) {
+export function mountWorker(ctx, section, config) {
   ctx.effect(() => ctx.systemPrompt.section(section))
   ctx.inject(['storageDomain'], (storeCtx) => {
-    let opened
-    const store = () => (opened ??= openWorkingUnits(storeCtx))
-    storeCtx.effect(() => () => { opened?.then((handle) => handle.close()).catch(() => {}) })
+    // The store the manager and the Partner opened: a report is recorded where
+    // every other scope reads it.
+    const store = () => sharedStore(storeCtx)
     storeCtx.effect(() => ctx.tools.register({
       ...REPORT_TOOL,
       execute: async (args, exec) => {
         try {
-          return await record(storeCtx, await store(), exec?.agent?.id, args ?? {})
+          const result = await record(storeCtx, await store(), exec?.agent?.id, args ?? {})
+          // A report may end the assignment and give a slot back; the queued
+          // unit that can start now does, before this turn's answer returns.
+          if (result.record) await advance(storeCtx)
+          return result
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           return refused(message.replace(/\s+/g, ' ').trim().replace(/\.$/, ''))

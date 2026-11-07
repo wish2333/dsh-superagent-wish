@@ -144,9 +144,17 @@ function stop(unit, fact) {
 export function report(unit, incoming) {
   if (unit.state === 'ended') throw new WorkingUnitError('workingUnit/ended', 'The working unit has ended')
   const at = incoming.at ?? unit.updatedAt
+  // A report other than `progress` ends the assignment it belongs to: the
+  // worker's turn is over, so the slot it held is free. `progress` reports on a
+  // turn still running and leaves the assignment as it is.
+  const finished = incoming.state !== 'progress'
   const assignments = unit.assignments.map((assignment, index) =>
     index === unit.assignments.length - 1
-      ? { ...assignment, report: { state: incoming.state, summary: incoming.summary, at } }
+      ? {
+        ...assignment,
+        report: { state: incoming.state, summary: incoming.summary, at },
+        ...(finished ? { state: 'ended', endedAt: at, endedReason: incoming.state } : {}),
+      }
       : assignment)
   const reported = withAssignments(unit, assignments)
   switch (incoming.state) {

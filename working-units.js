@@ -202,3 +202,29 @@ export async function openWorkingUnits(ctx) {
   }
 }
 
+
+/**
+ * One store per storage medium, shared by every scope that opens it.
+ *
+ * The plugin opens its tables from the manager, from the Partner preset and from
+ * each Worker preset, and those are separate scopes: a store each would be a
+ * separate handle over the same records, and a write on one would not be what
+ * the others read. One handle per medium keeps every scope on the same rows,
+ * which is what the queue's pump depends on.
+ */
+const stores = new WeakMap()
+
+/**
+ * The store for `ctx`'s medium, opened once.
+ *
+ * The domain is released by the first opener's `ctx.effect`, so it lives as long
+ * as the plugin; a later caller joins the same handle.
+ *
+ * @param ctx a plugin context that provides `storageDomain`
+ * @returns the shared store
+ */
+export function sharedStore(ctx) {
+  const medium = ctx.storageDomain
+  if (!stores.has(medium)) stores.set(medium, openWorkingUnits(ctx))
+  return stores.get(medium)
+}
