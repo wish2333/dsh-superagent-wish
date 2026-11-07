@@ -19,6 +19,7 @@
 import { createHash } from 'node:crypto'
 import { readdir, stat } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
+import { judge } from './judge.js'
 import { sharedPolicy } from './policy.js'
 import { sharedStore } from './working-units.js'
 
@@ -314,12 +315,17 @@ export const FILE_POLL_MS = 2000
 const pollers = new WeakMap()
 
 /**
- * Read every source's directories now, as the next poll would.
+ * Read every source's directories now, as the next poll would, and then hand
+ * the events that wait to the Secretary.
+ *
  * @param ctx the context the stores open on
+ * @returns the events this read recorded
  */
 export async function poll(ctx) {
   const running = pollers.get(ctx.storageDomain)?.read
-  return running ? running() : []
+  const written = running ? await running() : []
+  await judge(ctx)
+  return written
 }
 
 /** The task title the schedule source creates. */
@@ -341,6 +347,25 @@ const scheduleState = new WeakMap()
 function stateOf(medium) {
   if (!scheduleState.has(medium)) scheduleState.set(medium, {})
   return scheduleState.get(medium)
+}
+
+/**
+ * The schedule task this module opened, if the Host still holds it.
+ *
+ * The task is the Host's, not the plugin's: one Partner edits it, and a restart
+ * finds it again. A task taken away elsewhere reports none, and a new one opens.
+ *
+ * @param schedule the Schedule service
+ * @param id the task id the plugin last opened or edited
+ * @returns `true` when the Host still holds the task
+ */
+async function held(schedule, id) {
+  if (typeof schedule.view !== 'function') return true
+  try {
+    return (await schedule.view({ id })) !== undefined
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -366,13 +391,13 @@ export async function applySchedule(ctx, block) {
     return state.id
   }
   const everySeconds = block.config.everySeconds
-  if (state.id) {
+  if (state.id && await held(schedule, state.id)) {
     if (!state.paused && state.everySeconds === everySeconds) return state.id
     await schedule.edit({
       id: state.id,
       action: 'update',
       patch: { timing: { kind: 'every', everySeconds }, active: true },
-    }).catch(() => {})
+    })
     Object.assign(state, { everySeconds, paused: false })
     return state.id
   }

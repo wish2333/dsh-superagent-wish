@@ -33,3 +33,14 @@ test('only the implementer preset mounts the shell', () => {
   assert.ok(presetRows(byId['superagent-wish-implementer']).some((row) => row.name === '@deepseek-ai/dsh-tool-bash'))
   assert.ok(!presetRows(byId['superagent-wish-discoverer']).some((row) => row.name === '@deepseek-ai/dsh-tool-bash'))
 })
+
+test('a Host with no Schedule service loads without a failed task, and the entry still registers every preset', async () => {
+  const host = createHost({ missing: ['schedule'], storageDomain: (await import('./host-fake.js')).createStorageDomain() })
+  const warned = []
+  host.ctx.logger = { warn: (message) => warned.push(String(message)) }
+  apply(host.ctx)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(host.callsTo('agentPresets.register').length, PRESETS.length)
+  assert.equal(host.callsTo('schedule.create').length, 0)
+  assert.ok(warned.every((message) => !/Invalid value/.test(message)), warned.join('\n'))
+})

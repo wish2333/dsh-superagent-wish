@@ -123,6 +123,8 @@ function eventPayload(event) {
  * @returns the event ids woken by this call
  */
 export async function judge(ctx, { store = undefined, policy = undefined } = {}) {
+  // A Host without the policy's medium reads no event: there is nothing to judge it against, and nothing was recorded either.
+  if (!store && !ctx.storageDomain) return []
   const [tables, record] = await Promise.all([store ?? sharedStore(ctx), policy ?? sharedPolicy(ctx)])
   const pending = tables.pendingEvents()
   if (!pending.length) return []

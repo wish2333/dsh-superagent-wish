@@ -56,6 +56,8 @@ export class UnknownWorkingUnit extends Error {
  * @returns the store
  */
 export async function openWorkingUnits(ctx) {
+  // A Host without the storage medium keeps no tables; a read fails as it would anywhere else.
+  if (!ctx.storageDomain?.open) throw new Error('the Host provides no storageDomain service')
   const domain = await ctx.storageDomain.open(workingUnitDomain)
   let closed
   const close = () => (closed ??= Promise.resolve(domain.close()))

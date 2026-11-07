@@ -115,6 +115,8 @@ export function sharedPolicy(ctx) {
  * @returns `current()`, `setPolicy(blocks)`, `revalidate(mandate)` and `close()`
  */
 export async function openPolicy(ctx) {
+  // A Host without the storage medium keeps no policy; a read fails as it would anywhere else.
+  if (!ctx.storageDomain?.open) throw new Error('the Host provides no storageDomain service')
   const domain = await ctx.storageDomain.open(policyDomain)
   let closed
   const close = () => (closed ??= Promise.resolve(domain.close()))

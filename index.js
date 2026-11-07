@@ -131,12 +131,22 @@ export function slotsOf(config) {
  * saved before the Host could open it.
  */
 function applyScheduleFromPolicy(ctx) {
-  Promise.resolve()
-    .then(async () => {
-      const policy = await sharedPolicy(ctx)
-      await applySchedule(ctx, policy.current().sources.schedule)
+  // An `async` body, so a throw before the first await is caught like one after it.
+  // The Host may have no Schedule service at all, and then the source is saved
+  // and its events are read, but no task opens; the warning says which.
+  const open = async () => {
+    // The medium is read once, here, so a host without one fails in `open` rather than in `sharedPolicy`.
+    if (!ctx.storageDomain) throw new Error('the Host provides no storageDomain service')
+    const policy = await sharedPolicy(ctx)
+    await applySchedule(ctx, policy.current().sources.schedule)
+  }
+  open()
+    .catch((error) => {
+      const message = `superagent-wish: the patrol task could not be opened: ${error?.message ?? String(error)}`
+      // The manager's own loader has no logger; a warning here must not become an unhandled rejection.
+      if (ctx.logger?.warn) ctx.logger.warn(message)
+      else console.warn(message)
     })
-    .catch((error) => ctx.logger?.warn?.(`superagent-wish: the patrol task could not be opened: ${error.message ?? String(error)}`))
 }
 
 export function apply(ctx, config) {
@@ -158,13 +168,18 @@ export function apply(ctx, config) {
     })
     : undefined
   started?.catch((error) => ctx.logger?.warn(`superagent-wish: the dispatch queue did not start: ${error.message}`))
-  // The event sources and the judgement are mounted by their own preset rows;
-  // the manager only starts the judgement loop, which is what wakes a Secretary
-  // for an event another scope's source recorded.
-  if (ctx.storageDomain) {
-    applyJudge(ctx)
-    applyScheduleFromPolicy(ctx)
-  }
+  // The event sources are mounted by their own preset rows; the manager starts
+  // the judgement loop, which wakes a Secretary for an event another scope's
+  // source recorded, and the patrol task the policy asks for.
+  //
+  // The services these two read are named here rather than read off `ctx`:
+  // Cordis refuses a read of an injected name it has not provided. A Host
+  // without a Schedule service reads no event and opens no task, so the
+  // callback waits for one; a save says so where it would need it.
+  ctx.inject(['storageDomain', 'sessionController', 'schedule'], (scheduleCtx) => {
+    applyJudge(scheduleCtx)
+    applyScheduleFromPolicy(scheduleCtx)
+  })
   for (const preset of PRESETS) {
     const registration = ctx.agentPresets.register({
       id: preset.id,

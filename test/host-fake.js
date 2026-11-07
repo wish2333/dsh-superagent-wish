@@ -18,6 +18,8 @@ export function createHost(options = {}) {
   const disposers = []
   const presets = new Map()
   const workingDirectories = new Map()
+  // The tasks `ctx.schedule` holds, by id, as the real service stores them.
+  const tasks = new Map()
 
   const record = (name, args) => calls.push({ name, args })
 
@@ -167,6 +169,57 @@ export function createHost(options = {}) {
       }
       callback(ctx)
     },
+    /**
+     * The Schedule service, as `@deepseek-ai/dsh-schedule` exposes it to a
+     * plugin: `create(request, actorSessionId, signal)` returns the stored
+     * task, `edit` updates or deletes one, `view` reads one. A test registers a
+     * task or reads the stored ones through `tasks()` on the returned host.
+     */
+    schedule: {
+      create(request, actorSessionId, signal) {
+        record('schedule.create', { request, actorSessionId, signal })
+        const id = `schedule-${tasks.size + 1}`
+        const task = {
+          id,
+          ...structuredClone(request),
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+        tasks.set(id, task)
+        return Promise.resolve(structuredClone(task))
+      },
+      edit(request) {
+        record('schedule.edit', request)
+        const task = tasks.get(request.id)
+        if (!task) return Promise.reject(Object.assign(new Error(`no schedule ${request.id}`), { code: 'schedule/not-found' }))
+        if (request.action === 'delete') {
+          tasks.delete(request.id)
+          return Promise.resolve({ deleted: true })
+        }
+        if (request.action === 'pause' || request.action === 'resume') {
+          task.status = request.action === 'pause' ? 'paused' : 'active'
+        }
+        if (request.patch) {
+          for (const [key, value] of Object.entries(request.patch)) {
+            if (key === 'active') task.status = value ? 'active' : 'paused'
+            else if (value === undefined) delete task[key]
+            else task[key] = structuredClone(value)
+          }
+        }
+        task.updatedAt = new Date().toISOString()
+        return Promise.resolve(structuredClone(task))
+      },
+      view(request) {
+        record('schedule.view', request)
+        const task = tasks.get(request.id)
+        return Promise.resolve(task ? structuredClone(task) : undefined)
+      },
+      list() {
+        record('schedule.list', {})
+        return Promise.resolve([...tasks.values()].map((task) => structuredClone(task)))
+      },
+    },
     on(name, handler, eventOptions) {
       // A listener without `global` sees only its own scope; record the option so
       // a test can assert the plugin asked for cross-scope delivery.
@@ -245,6 +298,10 @@ export function createHost(options = {}) {
     },
     /** The fake storage domain: `snapshot()` for a reload, `contents()` to read it. */
     storageDomain,
+    /** The scheduled tasks the fake Schedule service holds, by id. */
+    tasks() {
+      return Object.fromEntries([...tasks].map(([id, task]) => [id, structuredClone(task)]))
+    },
     /** Fires a Context event, awaiting every handler. */
     async emit(name, payload) {
       for (const handler of listeners.get(name) ?? []) await handler(payload)

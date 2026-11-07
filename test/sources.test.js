@@ -233,30 +233,6 @@ test('with no rule set the Secretary reads that no rule is set, and judges by no
 
 // --- the file source: intake -------------------------------------------------
 
-/** A fake Host whose clock and timers the test drives, alongside the services. */
-function fakeClock() {
-  const timers = []
-  return {
-    timers,
-    install(host) {
-      host.ctx.schedule = {
-        create(request, actorSessionId, signal) {
-          host.calls.push({ name: 'schedule.create', args: { request, actorSessionId, signal } })
-          return Promise.resolve({ id: `schedule-${timers.length}` })
-        },
-        edit(request) {
-          host.calls.push({ name: 'schedule.edit', args: request })
-          return Promise.resolve({})
-        },
-      }
-      host.ctx.effect(() => () => {
-        for (const timer of timers.splice(0)) clearInterval(timer)
-      })
-      return host
-    },
-  }
-}
-
 /** Puts a file in `directory` and returns its path. */
 async function put(directory, name, content) {
   await mkdir(directory, { recursive: true })
@@ -360,7 +336,7 @@ test('a file that changed is a new event, and one of an ignored type is recorded
 test('the schedule source seats its patrol on a ctx.schedule task and records what it observes without waking a conversation', async () => {
   const host = await plugin()
   try {
-    const clock = fakeClock().install(host)
+
     const inbox = join(host.base, 'inbox')
     await put(inbox, 'note.md', '# a note')
     await put(inbox, 'other.txt', 'not a watched type')
@@ -388,7 +364,6 @@ test('the schedule source seats its patrol on a ctx.schedule task and records wh
     assert.equal(patrolled[0].source, 'schedule')
     assert.equal(patrolled[0].status, 'recorded')
     assert.match(patrolled[0].text, /2 file\(s\), 1 of a watched type/)
-    assert.ok(clock)
   } finally {
     await host.cleanup()
   }
@@ -397,7 +372,6 @@ test('the schedule source seats its patrol on a ctx.schedule task and records wh
 test('a patrol that observes nothing new writes no row, and a patrol that reports always writes one', async () => {
   const host = await plugin()
   try {
-    fakeClock().install(host)
     const inbox = join(host.base, 'inbox')
     await put(inbox, 'note.md', '# a note')
     textOf(await call(host, 'partner_setup', {
@@ -591,6 +565,42 @@ test('partner_list shows the dropped events to Partner, with when, which event a
     // The list of units is still read through the same tool: nothing was added to read the events.
     const names = host.callsTo('tools.register').map((item) => item.args.definition.name).sort()
     assert.deepEqual(names, ['partner_decide', 'partner_dispatch', 'partner_followup', 'partner_list', 'partner_patrol', 'partner_report', 'partner_setup', 'partner_stop'])
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('saving a new patrol period edits the one task, and turning the source off pauses it', async () => {
+  const host = await plugin()
+  try {
+    textOf(await call(host, 'partner_setup', { principalSessionId: PARTNER, settings: { source: 'schedule', config: { enabled: true, everySeconds: 300 } } }))
+    const [task] = Object.values(host.tasks())
+    assert.deepEqual(task.timing, { kind: 'every', everySeconds: 300 })
+    assert.equal(task.status, 'active')
+    assert.equal(host.callsTo('schedule.create').length, 1)
+
+    textOf(await call(host, 'partner_setup', { principalSessionId: PARTNER, settings: { source: 'schedule', config: { everySeconds: 600 } } }))
+    assert.equal(host.callsTo('schedule.create').length, 1, 'no second task is opened')
+    assert.deepEqual(host.tasks()[task.id].timing, { kind: 'every', everySeconds: 600 })
+
+    textOf(await call(host, 'partner_setup', { principalSessionId: PARTNER, settings: { source: 'schedule', enabled: false } }))
+    assert.equal(host.tasks()[task.id].status, 'paused')
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a judgement message is not pushed to Partner as a report: nothing reaches wish', async () => {
+  const host = await plugin()
+  try {
+    const { written } = await withNote(host)
+    const partner = host.ctx.agents.get(PARTNER)
+    assert.equal(partner.delivered.length, 0, 'judging wakes only the Secretary')
+    assert.equal(written.length, 1)
+    // The judgement went to the Secretary's inbox, and nowhere else.
+    const secretary = host.ctx.agents.get(SECRETARY_ID)
+    assert.equal(secretary.delivered.filter((item) => item.mode === 'followup').length, 1)
+    assert.deepEqual([...host.ctx.agents.get(PARTNER).delivered], [])
   } finally {
     await host.cleanup()
   }
