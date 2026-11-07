@@ -9,12 +9,13 @@
  * event itself, and either way the event leaves the queue.
  *
  * The judgement is a notice, built the one way a message to another Session is
- * built (relay.js): `agent-message`, `form: 'relay'`, the sending Session. It
- * is not a report, so it is never pushed as one.
+ * built (`agentMessage` in relay.js): `agent-message`, `form: 'relay'`, the
+ * sending Session. It is not a report, so it is never pushed as one.
  */
 
 import { advance } from './advance.js'
 import { dispatch } from './partner.js'
+import { agentMessage } from './relay.js'
 import { sharedPolicy } from './policy.js'
 import { openPump, slotsFor } from './pump.js'
 import { slotsFrom } from './queue.js'
@@ -84,19 +85,6 @@ const woken = new Set()
 const timers = new WeakMap()
 
 /**
- * The message a Secretary takes for one judgement: an `agent-message` from the
- * Partner conversation whose rules it judges by.
- */
-function judgementMessage(payload, principal) {
-  return {
-    id: globalThis.crypto.randomUUID(),
-    role: 'user',
-    content: [{ type: 'text', text: JSON.stringify(payload) }],
-    source: { kind: 'agent-message', form: 'relay', senderSessionId: principal },
-  }
-}
-
-/**
  * The event as the Secretary reads it: enough to judge, and nothing that would
  * let it act on the event's text as if it were a rule.
  */
@@ -158,7 +146,7 @@ export async function judge(ctx, { store = undefined, policy = undefined } = {})
     if (payload.event === undefined) delete payload.event
     if (payload.events === undefined) delete payload.events
     try {
-      agent.followup(judgementMessage(payload, principal))
+      agent.followup(agentMessage(payload, principal))
       sent.push(...batch.map((event) => event.id))
     } catch (error) {
       for (const event of batch) woken.delete(`${principal}:${event.id}`)

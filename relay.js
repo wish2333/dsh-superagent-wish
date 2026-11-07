@@ -1,5 +1,5 @@
 /**
- * The report channel: the one place a report becomes a message to Partner.
+ * The report channel: the one place a message from another Session is built.
  *
  * A Worker report is the only thing a Worker says to Partner, and it reaches
  * Partner as Partner's own inbox takes any message from another Session: one
@@ -76,7 +76,7 @@ export async function relayReport(ctx, unit, incoming, { round, reported = carri
   reported.add(key)
   const resolved = await ctx.sessionController.resolveAgent(unit.partnerSessionId)
   if ('error' in resolved) throw new Error(`the Partner session ${unit.partnerSessionId} could not be opened (${resolved.error?.code ?? 'unknown error'})`)
-  resolved.agent.steer(relayMessage(reportMessage(unit, incoming, new Date().toISOString()), incoming.source))
+  resolved.agent.steer(agentMessage(reportMessage(unit, incoming, new Date().toISOString()), incoming.source))
   return key
 }
 
@@ -181,18 +181,19 @@ export async function turnEnded(ctx, store, sessionId, after) {
 }
 
 /**
- * A message Partner's Session takes from another Session.
+ * A message one Session's inbox takes from another Session: the relay a Worker
+ * report reaches Partner in, and the notice a judgement reaches a Secretary in.
  *
  * Every user message needs an `id` and a `source`, and the Host drops one
  * without either without a word. `agent-message` requires the relay form and
- * the sending Session's id, which is how Partner tells a Worker's report from
- * wish's own words.
+ * the sending Session's id, which is how a receiver tells a relayed message
+ * from its own user's words. A payload that is not a string is sent as JSON.
  */
-function relayMessage(relayed, senderSessionId) {
+export function agentMessage(payload, senderSessionId) {
   return {
     id: globalThis.crypto.randomUUID(),
     role: 'user',
-    content: [{ type: 'text', text: JSON.stringify(relayed) }],
+    content: [{ type: 'text', text: typeof payload === 'string' ? payload : JSON.stringify(payload) }],
     source: { kind: 'agent-message', form: 'relay', senderSessionId },
   }
 }

@@ -433,6 +433,7 @@ test('a patrol that observes nothing new writes no row, and a patrol that report
 
 // --- the judgement -----------------------------------------------------------
 
+
 /** Sets up the files source with one rule, and puts a note in the inbox. */
 async function withNote(host, options = {}) {
   const inbox = join(host.base, 'inbox')
@@ -469,6 +470,7 @@ test('a file event reaches the Secretary of the conversation that set the rules,
     assert.ok(payload.event.text.includes('note.md'))
     assert.deepEqual(payload.rules.map((rule) => rule.id), ['inbox-notes'])
     assert.equal(payload.decide.tool, 'partner_decide', 'the judgement names the tool that decides it')
+
   } finally {
     await host.cleanup()
   }
