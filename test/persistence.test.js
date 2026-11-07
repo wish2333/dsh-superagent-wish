@@ -20,9 +20,25 @@ async function open(medium = createStorageDomain()) {
   return { store, host, medium }
 }
 
+/**
+ * Starts one unit through the store: the id comes from the store, the Worker
+ * Session and the directory from the caller, as the Partner tool passes them.
+ */
+function start(store, fields = {}) {
+  const id = store.nextId()
+  return store.dispatch({
+    ...DISPATCH,
+    ...fields,
+    id,
+    partnerSessionId: 'partner-1',
+    workerSessionId: `superagent-wish-${id}`,
+    directory: `/work/superagent-wish/${id}`,
+  })
+}
+
 test('a working unit is read back after the plugin reloads', async () => {
   const first = await open()
-  const { id } = await first.store.dispatch(DISPATCH)
+  const { id } = await start(first.store)
   await first.medium.opened.at(-1).close()
 
   const second = await open(createStorageDomain(first.medium.snapshot()))
@@ -33,7 +49,8 @@ test('a working unit is read back after the plugin reloads', async () => {
 
 test('each table holds the record its relation belongs to', async () => {
   const { store, medium } = await open()
-  const { id } = await store.dispatch(DISPATCH)
+  const { id } = await start(store)
+  assert.equal(id, 'unit-1')
   assert.deepEqual(medium.writesOf('working_units').map((write) => write.key), [id])
   assert.deepEqual(medium.writesOf('mandates').map((write) => write.key), [id])
   assert.deepEqual(medium.writesOf('assignments').map((write) => write.key), [`${id}/assignment-0`])
@@ -49,7 +66,7 @@ test('the store closes the domain it opened when the plugin unloads', async () =
 
 test('a follow-up input survives a reload and is still queued', async () => {
   const first = await open()
-  const { id } = await first.store.dispatch(DISPATCH)
+  const { id } = await start(first.store)
   await first.store.followup(id, { text: 'Make it tolerate holes' })
   first.host.dispose()
 
@@ -61,7 +78,7 @@ test('a follow-up input survives a reload and is still queued', async () => {
 
 test('a report made before a reload is still the state read back', async () => {
   const first = await open()
-  const { id } = await first.store.dispatch(DISPATCH)
+  const { id } = await start(first.store)
   await first.store.report(id, { state: 'ready', summary: 'Delivered the storage layer' })
   first.host.dispose()
 
@@ -72,7 +89,7 @@ test('a report made before a reload is still the state read back', async () => {
 
 test('the authorization read back keeps its scope, strength and policy version', async () => {
   const first = await open()
-  const { id } = await first.store.dispatch({ ...DISPATCH, scope: 'src/worker', strength: 'inferred', policyVersion: 'policy-9' })
+  const { id } = await start(first.store, { scope: 'src/worker', strength: 'inferred', policyVersion: 'policy-9' })
   first.host.dispose()
 
   const second = await open(createStorageDomain(first.medium.snapshot()))
@@ -86,24 +103,24 @@ test('the authorization read back keeps its scope, strength and policy version',
 
 test('a unit started after a reload gets an id no stored unit has', async () => {
   const first = await open()
-  const { id } = await first.store.dispatch(DISPATCH)
+  const { id } = await start(first.store)
   first.host.dispose()
 
   const second = await open(createStorageDomain(first.medium.snapshot()))
-  const next = await second.store.dispatch({ ...DISPATCH, title: 'Second unit' })
+  const next = await start(second.store, { title: 'Second unit' })
   assert.notEqual(next.id, id)
   assert.deepEqual(second.store.list().map((unit) => unit.title), [DISPATCH.title, 'Second unit'])
 })
 
 test('an id a stored unit still holds is not issued again', async () => {
   const first = await open()
-  const { id: firstId } = await first.store.dispatch(DISPATCH)
-  const { id: secondId } = await first.store.dispatch({ ...DISPATCH, title: 'Second unit' })
+  const { id: firstId } = await start(first.store)
+  const { id: secondId } = await start(first.store, { title: 'Second unit' })
   await first.medium.opened.at(-1).table('working_units').delete(firstId)
   first.host.dispose()
 
   const second = await open(createStorageDomain(first.medium.snapshot()))
-  const next = await second.store.dispatch({ ...DISPATCH, title: 'Third unit' })
+  const next = await start(second.store, { title: 'Third unit' })
   assert.equal(secondId, 'unit-2')
   assert.equal(next.id, 'unit-3')
 })

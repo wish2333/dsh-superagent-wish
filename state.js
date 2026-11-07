@@ -111,10 +111,13 @@ function read(unit, fact, at) {
 }
 
 /**
- * End the running assignment only; the unit keeps its state so a follow-up can
- * start the next assignment. Input delivered to the ended assignment that the
- * worker never read goes back to the front of the queue: a cancel may have
- * dropped it, so only its next delivery is guaranteed.
+ * End the running assignment, and with it the unit's work for now: the unit
+ * waits for an input. A stop is not an end — the unit keeps its id, its
+ * directory and its queue — and the next input opens a new assignment.
+ *
+ * Input delivered to the ended assignment that the worker never read goes back
+ * to the front of the queue: a cancel may have dropped it, so only its next
+ * delivery is guaranteed.
  */
 function stop(unit, fact) {
   if (unit.state === 'ended') return unit
@@ -126,7 +129,8 @@ function stop(unit, fact) {
     .map((input) => input.id)
   const requeued = unit.inputs.map((input) =>
     unread.includes(input.id) ? { ...input, deliveredTo: undefined, readAt: undefined } : input)
-  return withAssignments({ ...unit, inputs: requeued, undelivered: [...unread, ...unit.undelivered], updatedAt: at },
+  return withAssignments(
+    { ...unit, state: 'waiting-for-input', inputs: requeued, undelivered: [...unread, ...unit.undelivered], updatedAt: at },
     unit.assignments.map((item) => (item.id === assignment.id
       ? { ...item, state: 'ended', endedAt: at, endedReason: fact.endedReason ?? 'stopped' }
       : item)))

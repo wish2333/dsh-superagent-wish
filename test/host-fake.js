@@ -4,9 +4,11 @@
  */
 
 /**
- * @param {{ services?: string[], resolvablePresets?: string[] }} [options]
+ * @param {{ services?: string[], resolvablePresets?: string[], missing?: string[], storageDomain?: unknown }} [options]
  *   `services` beyond the always-present ones; `resolvablePresets` are the
- *   preset ids a Session may be created with, which `create` then echoes
+ *   preset ids a Session may be created with, which `create` then echoes; the
+ *   `storageDomain` medium the plugin opens; `missing` names services a test
+ *   wants `inject` to report absent
  * @returns a fake Context plus the log of calls made against it
  */
 export function createHost(options = {}) {
@@ -15,8 +17,28 @@ export function createHost(options = {}) {
   const agents = new Map()
   const disposers = []
   const presets = new Map()
+  const workingDirectories = new Map()
 
   const record = (name, args) => calls.push({ name, args })
+
+  /**
+   * A live Agent as `sessionController.resolveAgent` returns it. It records the
+   * messages it is handed, the way a real Agent's inbox takes them, so a test
+   * can assert what reached the worker and in which mode.
+   */
+  const liveAgent = (id, extra = {}) => {
+    const delivered = []
+    const agent = {
+      id,
+      delivered,
+      status: 'idle',
+      followup: (message) => { delivered.push({ mode: 'followup', message }) },
+      steer: (message) => { delivered.push({ mode: 'steer', message }) },
+      cancel: (cause, cancelOptions) => { delivered.push({ mode: 'cancel', cause, options: cancelOptions }) },
+      ...extra,
+    }
+    return agent
+  }
 
   const ctx = {
     agentPresets: {
@@ -81,7 +103,7 @@ export function createHost(options = {}) {
       create(input) {
         record('sessionController.create', input)
         const session = { id: input.sessionId ?? 'session-created' }
-        agents.set(session.id, { id: session.id, session })
+        agents.set(session.id, liveAgent(session.id, { session }))
         return Promise.resolve({
           sessionId: session.id,
           ...(input.agentPreset === undefined || !options.resolvablePresets?.includes(input.agentPreset) ? {} : { agentPreset: input.agentPreset }),
@@ -124,9 +146,20 @@ export function createHost(options = {}) {
     /**
      * Mirrors Cordis: the callback runs only when every named service is
      * present, and the child context is the parent. `missing` lists the
-     * services a test wants to be absent.
+     * services a test wants to be absent. A plugin that declares its services
+     * with `ctx.inject(NAMES, callback)` never mounts its callback when one is
+     * absent, so those tests must not expect a child either.
      */
     inject(names, callback) {
+      if (typeof names === 'function') {
+        const missing = (options.missing ?? []).filter((name) => !(name in ctx))
+        if (missing.length > 0) {
+          record('inject.pending', { names: Object.keys(ctx), missing })
+          return
+        }
+        names(ctx)
+        return
+      }
       const missing = (options.missing ?? []).filter((name) => names.includes(name))
       if (missing.length > 0) {
         record('inject.pending', { names, missing })
@@ -154,6 +187,26 @@ export function createHost(options = {}) {
     if (name === 'storageDomain') continue
     if (!(name in ctx)) ctx[name] = { record: (args) => record(name, args) }
   }
+  // The two services the dispatch path reads that no other test uses yet: the
+  // Partner's own directory and its model selection default, one shared by the
+  // Host rather than the Session.
+  if ('workingDirectory' in options) {
+    ctx.workingDirectory = {
+      defaultDirectory: options.workingDirectory,
+      get(session) {
+        record('workingDirectory.get', session)
+        return workingDirectories.get(session) ?? session?.header?.cwd
+      },
+    }
+  }
+  if ('defaultModel' in options) {
+    ctx.agentDefaultModel = {
+      currentSelection() {
+        record('agentDefaultModel.currentSelection')
+        return { ...options.defaultModel }
+      },
+    }
+  }
 
   return {
     ctx,
@@ -178,6 +231,17 @@ export function createHost(options = {}) {
     /** Runs every disposer an effect registered, as unloading the plugin would. */
     dispose() {
       for (const disposer of disposers.splice(0)) disposer()
+    },
+    /** Records the directory `workingDirectory.get` reports for `session`. */
+    setWorkingDirectory(session, directory) {
+      workingDirectories.set(session, directory)
+    },
+    /**
+     * Deletes a Session the way DSH does when the user removes it: `resolveAgent`
+     * then reports `session/not-found`. It returns whether the Session existed.
+     */
+    removeSession(sessionId) {
+      return agents.delete(sessionId)
     },
     /** The fake storage domain: `snapshot()` for a reload, `contents()` to read it. */
     storageDomain,

@@ -98,21 +98,34 @@ export async function openWorkingUnits(ctx) {
   const at = () => new Date().toISOString()
 
   return {
-    /** Start a unit under a mandate Partner created for it. */
-    async dispatch({ type, title, text, source = 'wish', sessionId = 'partner-1', scope, strength: s = 'explicit', policyVersion, basis = 'wish' }) {
-      const now = at()
-      // Count past the highest stored number, so a deleted unit's id is never
-      // reused and a reloaded domain continues the sequence.
+    /** The next id a dispatch issues; a deleted unit's id is never reused. */
+    nextId() {
+      // Count past the highest stored number, so a reloaded domain continues the
+      // sequence rather than repeating an id a deleted unit once held.
       const highest = [...units.keys()]
         .map((key) => Number(/^unit-(\d+)$/.exec(key)?.[1] ?? 0))
         .reduce((a, b) => Math.max(a, b), 0)
-      const id = `unit-${highest + 1}`
-      const unit = begin(
-        { id, type, title, source, sessionId, createdAt: now, updatedAt: now },
+      return `unit-${highest + 1}`
+    },
+
+    /**
+     * Start a unit under a mandate Partner created for it, with its first input.
+     *
+     * The Worker Session id and the directory are the caller's to name; the
+     * store only records what the Host was told, so a reloaded plugin reads back
+     * the Session and directory a unit actually has.
+     *
+     * @param unit `id`, `type`, `title`, `text`, `source`, `partnerSessionId`,
+     *   `workerSessionId`, `directory`, `scope`, `strength`, `policyVersion`, `basis`
+     */
+    async dispatch(unit) {
+      const now = at()
+      const { text, source = 'wish', scope, strength: s = 'explicit', policyVersion, basis = 'wish', ...fields } = unit
+      const started = begin(
+        { ...fields, source, createdAt: now, updatedAt: now },
         { scope, strength: s, policyVersion, basis },
       )
-      const created = followupState(unit, { text, source, at: now })
-      return write(created)
+      return write(followupState(started, { text, source, at: now }))
     },
 
     /** Add input to an open unit and queue it. */
