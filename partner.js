@@ -9,11 +9,15 @@
  * failing the preset.
  */
 
+import { advance } from './advance.js'
+import { sharedPolicy } from './policy.js'
+import { openPump, slotsFor } from './pump.js'
+import { nextToStart, slotsFrom } from './queue.js'
 import { turnEnded } from './relay.js'
-import { openWorkingUnits } from './working-units.js'
+import { sharedStore } from './working-units.js'
 import { deliver, describe, ensureWorker, selectModel, stop, unitDirectory, WORKER_TYPES, workerSessionId } from './sessions.js'
 
-export const inject = ['systemPrompt', 'tools']
+export const inject = ['systemPrompt', 'tools', 'storageDomain']
 
 /** Host services the dispatch chain reads. Cordis refuses a read of an undeclared service. */
 export const WORKER_SERVICES = ['sessionController', 'workspaceRegistry', 'permissionPresets', 'agents', 'workingDirectory']
@@ -209,7 +213,7 @@ function guarded(body) {
  * unit is recorded only after the Worker opened, so a failed dispatch leaves no
  * unit behind.
  */
-export async function dispatch(ctx, store, args, exec) {
+export async function dispatch(ctx, store, policy, slots, args, exec) {
   const session = exec?.agent?.id
   if (!session) {
     return refused('Dispatch refused: this call carries no calling session, so a Worker would have no one to report to.')
@@ -237,7 +241,8 @@ export async function dispatch(ctx, store, args, exec) {
   }
 
   // The model is chosen before the Session is opened, so a model the Host does
-  // not have is refused without creating an unusable Worker.
+  // not have is refused without creating an unusable Worker. A queued unit
+  // records it, and the pump selects it when the unit starts.
   let model
   if (args.model) {
     model = { provider: String(args.model.provider ?? ''), model: String(args.model.model ?? '') }
@@ -247,53 +252,108 @@ export async function dispatch(ctx, store, args, exec) {
     }
   }
 
-  // Steps 0–5 of the chain, in the order docs/impl/superagent-impl.md §2 lists them.
-  const { agent } = await ensureWorker(ctx, unit, { session: exec.agent.session })
+  // Whether this unit may start now is the queue's answer, given the units the
+  // store holds. A dispatch that may start is started by this call, so a Host
+  // that refuses the Worker leaves no unit behind and Partner reads why; one
+  // that may not is recorded and waits, and the pump starts it on a free slot.
+  const units = store.list()
+  const candidate = { ...unit, type, assignments: [{ state: 'pending' }], state: 'running' }
+  const mayStart = nextToStart([candidate], units, slots)?.id === id
+  const created = mayStart
+    ? await startNow(ctx, store, { ...unit, text: body, model, policyVersion: policy.version() }, { session: exec.agent.session })
+    : await store.dispatch({
+      ...unit,
+      text: body,
+      source: 'wish',
+      scope: title,
+      strength: 'explicit',
+      // The version the policy has now, so a later rule change can tell which
+      // units were opened under rules the current policy no longer states.
+      policyVersion: policy.version(),
+      basis: 'wish',
+      ...(model ? { model } : {}),
+    })
+
+  if (mayStart) {
+    // A dispatch that started may have freed nothing, but a queued unit ahead
+    // of it can go on a slot this one did not take (a discoverer).
+    await advance(ctx, () => openPump(ctx, store, () => slots))
+    return textResult(id, describeUnit(created, Date.now(), 'started'))
+  }
+  await advance(ctx, () => openPump(ctx, store, () => slots))
+  return textResult(id, describeUnit(store.get(id) ?? created, Date.now(), 'queued'))
+}
+
+/**
+ * Record the unit and start its Worker in one call: the unit is written only
+ * after the Worker opened, so a Host that refuses the Worker leaves no unit.
+ *
+ * @param ctx the Partner context
+ * @param store the open tables
+ * @param unit the dispatch's fields, with `text`, `model` and `policyVersion`
+ * @param options `session`, the Partner Session
+ * @returns the started unit
+ */
+async function startNow(ctx, store, unit, { session }) {
+  const { agent } = await ensureWorker(ctx, unit, { session })
   ctx.permissionPresets.set(agent.session, 'danger-full-access')
-  await ctx.sessionController.rename({ sessionId: unit.workerSessionId, title })
-  if (model) {
+  await ctx.sessionController.rename({ sessionId: unit.workerSessionId, title: unit.title })
+  if (unit.model) {
     try {
-      await selectModel(ctx, unit.workerSessionId, model)
+      await selectModel(ctx, unit.workerSessionId, unit.model)
     } catch (error) {
-      // The Session opened but cannot run the chosen model, and it has no unit and
-      // no input yet; Partner retries without the model rather than leaving a
-      // Worker behind that nothing records.
-      throw new Error(`the model ${model.provider}/${model.model} is not available (${describe(error)})`)
+      throw new Error(`the model ${unit.model.provider}/${unit.model.model} is not available (${describe(error)})`)
     }
   }
-
   const created = await store.dispatch({
     ...unit,
-    text: body,
     source: 'wish',
-    scope: title,
+    scope: unit.title,
     strength: 'explicit',
-    policyVersion: 'policy-1',
     basis: 'wish',
   })
-
   // The first input reaches the Worker only after its unit exists, so a report
   // cannot arrive before the unit it belongs to.
-  await deliver(ctx, created, created.inputs.at(-1), exec.agent.session)
+  const first = created.undelivered.map((inputId) => created.inputs.find((input) => input.id === inputId)).find(Boolean)
+  if (first) await deliver(ctx, created, first, session)
   // The first input is on its way, so the assignment it runs is running, and
   // the report or the turn end that answers it has a round to belong to.
-  await store.start(id)
-  return textResult(id, describeUnit(created))
+  const started = await store.start(created.id)
+  if (first) await store.deliver(started.id, [first.id])
+  return store.get(started.id)
 }
+
+/** Record one dispatch's working unit under the policy now in force. */
+function record(store, policy, unit) {
+  return {
+    ...unit,
+    text: body,
+  }
+}
+
+
 
 /**
  * `partner_followup`: queue one input and send it to the unit's current Worker.
  *
  * No confirmation and no directory work: the unit already has both. A Worker
  * Session deleted outside the plugin is opened again from the unit id.
+ *
+ * An ended unit is not continued either way, but the refusal says which of the
+ * two it is: the policy that holds the unit's mandate still holds it, so the
+ * unit is simply finished, or the policy no longer holds it, so the mandate
+ * would not be valid even if the unit were opened again.
  */
-export async function followup(ctx, store, args, exec) {
+export async function followup(ctx, store, policy, args, exec) {
   const unitId = String(args.unitId ?? '').trim()
   const text = String(args.text ?? '').trim()
   if (!text) return refused('Follow-up refused: there is no text to send.')
   const unit = store.get(unitId)
   if (!unit) return refused(`Follow-up refused: there is no working unit ${unitId}.`)
   if (unit.state === 'ended') {
+    if (!policy.revalidate(unit.mandate)) {
+      return refused(`Follow-up refused: working unit ${unitId} ended, and the policy no longer holds its mandate, so it stays ended. Start a new working unit for this work.`)
+    }
     return refused(`Follow-up refused: working unit ${unitId} has ended. Start a new working unit for new work.`)
   }
 
@@ -310,13 +370,15 @@ export async function followup(ctx, store, args, exec) {
  * `partner_stop`: cancel the Worker's turn. The unit keeps its state, its
  * directory and its queued input, and the next follow-up continues it.
  */
-export async function stopUnit(ctx, store, args) {
+export async function stopUnit(ctx, store, slots, args) {
   const unitId = String(args.unitId ?? '').trim()
   const unit = store.get(unitId)
   if (!unit) return refused(`Stop refused: there is no working unit ${unitId}.`)
   if (unit.state === 'ended') return refused(`Stop refused: working unit ${unitId} has already ended.`)
   const cancelled = stop(ctx, unit)
   await store.stop(unitId, args.reason ? String(args.reason) : 'stopped by wish')
+  // The stop ended the assignment, so it gave a slot back: a queued unit starts.
+  await advance(ctx, () => openPump(ctx, store, () => slots))
   return textResult(
     cancelled
       ? `Stopped ${unitId}: its worker's turn was cancelled. The unit and its directory remain; partner_followup continues it.`
@@ -335,7 +397,27 @@ export async function listUnits(store, args) {
   return textResult(summary, { units: lines })
 }
 
-export function apply(ctx) {
+/**
+ * The store and the policy the Partner tools read, opened on `ctx`'s medium.
+ *
+ * The tools open these lazily on first use; a settings path needs them before
+ * any tool ran, and needs the same handles so a write is the one the tools then
+ * read. A Host without a storage domain gets an error naming the missing
+ * service, as a tool would.
+ *
+ * @param ctx the Partner context, which must provide `storageDomain`
+ * @returns `{ store, policy }`
+ */
+export async function handles(ctx) {
+  if (!ctx.storageDomain) throw new Error('the Host provides no storageDomain service')
+  const [store, policy] = await Promise.all([sharedStore(ctx), sharedPolicy(ctx)])
+  return { store, policy }
+}
+
+export function apply(ctx, config) {
+  // The queue's slot count: the manager's, or this mount's when there is no manager.
+  const slots = slotsFor(ctx.storageDomain, slotsFrom(config?.implementerSlots))
+
   ctx.effect(() => ctx.systemPrompt.section({
     name: 'superagent-wish-partner',
     order: 50,
@@ -346,8 +428,10 @@ export function apply(ctx) {
     // The store belongs to the resources the tools were registered with: a Host
     // without a storage domain never reaches this line, and the tools are absent.
     workerCtx.inject(STORE_SERVICES, (storeCtx) => {
-      let opened
-      const store = () => (opened ??= openWorkingUnits(storeCtx))
+      // One store and one policy per medium: the manager, the Partner and each
+      // Worker preset all read the same rows.
+      const store = () => sharedStore(storeCtx)
+      const policy = () => sharedPolicy(storeCtx)
       // A Worker runs in its preset's own scope, so only a global listener sees
       // its status change: the listener reads the unit the Session id names,
       // and the turn's end is what its `whenIdle` promises.
@@ -367,9 +451,9 @@ export function apply(ctx) {
         }
       }, { global: true })
       const bodies = {
-        partner_dispatch: guarded((args, exec) => store().then((handle) => dispatch(workerCtx, handle, args, exec))),
-        partner_followup: guarded((args, exec) => store().then((handle) => followup(workerCtx, handle, args, exec))),
-        partner_stop: guarded((args) => store().then((handle) => stopUnit(workerCtx, handle, args))),
+        partner_dispatch: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => dispatch(workerCtx, handle, rules, slots, args, exec))),
+        partner_followup: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => followup(workerCtx, handle, rules, args, exec))),
+        partner_stop: guarded((args) => store().then((handle) => stopUnit(workerCtx, handle, slots, args))),
         partner_list: guarded((args) => store().then((handle) => listUnits(handle, args))),
       }
       for (const definition of TOOLS) {

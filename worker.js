@@ -1,6 +1,7 @@
+import { advance } from './advance.js'
 import { noted, relayReport } from './relay.js'
 import { WORKER_SESSION } from './sessions.js'
-import { openWorkingUnits } from './working-units.js'
+import { sharedStore } from './working-units.js'
 
 /**
  * The part both Worker presets share: the `partner_report` tool and the report
@@ -128,15 +129,20 @@ function refused(text) {
 export function mountWorker(ctx, section) {
   ctx.effect(() => ctx.systemPrompt.section(section))
   ctx.inject(['storageDomain'], (storeCtx) => {
-    let opened
-    const store = () => (opened ??= openWorkingUnits(storeCtx))
+    // The store the manager and the Partner opened: a report is recorded where
+    // every other scope reads it.
+    const store = () => sharedStore(storeCtx)
     // The relay reaches Partner through its Session, which the Worker preset
     // declares: a Host without it records reports and carries none.
     storeCtx.inject(['sessionController'], (reportCtx) => storeCtx.effect(() => ctx.tools.register({
       ...REPORT_TOOL,
       execute: async (args, exec) => {
         try {
-          return await record(storeCtx, await store(), exec?.agent?.id, args ?? {}, reportCtx)
+          const result = await record(storeCtx, await store(), exec?.agent?.id, args ?? {}, reportCtx)
+          // A report may end the assignment and give a slot back; the queued
+          // unit that can start now does, before this turn's answer returns.
+          if (result.record) await advance(storeCtx)
+          return result
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           return refused(message.replace(/\s+/g, ' ').trim().replace(/\.$/, ''))

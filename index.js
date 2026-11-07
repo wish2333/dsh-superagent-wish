@@ -7,7 +7,9 @@
  * no restriction is applied to an inherited global set.
  */
 
-import { openWorkingUnits } from './working-units.js'
+import { sharedStore } from './working-units.js'
+import { slotsFrom } from './queue.js'
+import { configureSlots, openPump, pumpFor, registeringPump } from './pump.js'
 
 export const inject = ['agentPresets', 'storageDomain']
 
@@ -83,16 +85,51 @@ export function openStore(ctx) {
   if (!ctx.storageDomain) return undefined
   // Returned rather than awaited, so `apply` stays synchronous like every other
   // insert; the opening closes its own domain when it fails.
-  return openWorkingUnits(ctx).catch((error) => {
+  return sharedStore(ctx).catch((error) => {
     ctx.logger?.warn(`superagent-wish: the working unit tables did not open: ${error.message}`)
     throw error
   })
 }
 
-export function apply(ctx) {
+/**
+ * The plugin configuration.
+ *
+ * `implementerSlots` is how many implementers may run at once; the default is
+ * two (`DEFAULT_IMPLEMENTER_SLOTS` in `queue.js`). A discoverer never takes a
+ * slot, and a wish follow-up never waits for one. The value is read when the
+ * plugin loads; a value outside the accepted range falls back to the default
+ * rather than failing the plugin, because a bad number must not stop dispatch.
+ *
+ * DSH passes the bundle patch's config to `apply(ctx, config)`, so
+ * `implementerSlots` is set there:
+ *
+ *     - name: @wish2333/dsh-superagent-wish
+ *       config:
+ *         implementerSlots: 3
+ */
+export function slotsOf(config) {
+  return slotsFrom(config?.implementerSlots)
+}
+
+export function apply(ctx, config) {
   // `apply` stays synchronous like every other insert, so the opening runs on
   // its own; a caller that needs the store awaits `openStore(ctx)` itself.
-  openStore(ctx)?.catch(() => {})
+  const opened = openStore(ctx)
+  opened?.catch(() => {})
+  const slots = slotsOf(config)
+  configureSlots(ctx.storageDomain, slots)
+  // The pump starts queued units and re-pumps on load, so a queue left by a
+  // restart continues without waiting for the next dispatch.
+  const started = opened
+    ? opened.then((store) => {
+      const pump = openPump(ctx, store, () => slots)
+      // Every other scope reaches this pump through the medium it was opened over.
+      pumpFor(ctx.storageDomain, pump)
+      registeringPump(ctx.storageDomain, Promise.resolve(pump))
+      return pump.pump().then(() => pump)
+    })
+    : undefined
+  started?.catch((error) => ctx.logger?.warn(`superagent-wish: the dispatch queue did not start: ${error.message}`))
   for (const preset of PRESETS) {
     const registration = ctx.agentPresets.register({
       id: preset.id,
@@ -105,4 +142,5 @@ export function apply(ctx) {
       ctx.effect(() => registration.then((dispose) => dispose))
     }
   }
+  return { store: opened, pump: started }
 }

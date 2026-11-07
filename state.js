@@ -148,9 +148,17 @@ export function report(unit, incoming) {
   // A discoverer's `ready` ended the unit, and the `waiting` the executor adds
   // when that same turn goes idle must not replace the result wish is to judge.
   if (incoming.state === 'waiting' && latest?.report?.state === 'ready') return unit
+  // A report other than `progress` ends the assignment it belongs to: the
+  // worker's turn is over, so the slot it held is free. `progress` reports on a
+  // turn still running and leaves the assignment as it is.
+  const finished = incoming.state !== 'progress'
   const assignments = unit.assignments.map((assignment, index) =>
     index === unit.assignments.length - 1
-      ? { ...assignment, report: { state: incoming.state, summary: incoming.summary, at, ...(incoming.source ? { source: incoming.source } : {}) } }
+      ? {
+        ...assignment,
+        report: { state: incoming.state, summary: incoming.summary, at, ...(incoming.source ? { source: incoming.source } : {}) },
+        ...(finished ? { state: 'ended', endedAt: at, endedReason: incoming.state } : {}),
+      }
       : assignment)
   const reported = withAssignments(unit, assignments)
   switch (incoming.state) {
@@ -171,6 +179,9 @@ export function report(unit, incoming) {
 /**
  * Add input and queue it, returning a unit waiting for a decision or for input
  * to running with a new assignment.
+ *
+ * An ended unit is not continued: ending is final, and the same work needs a
+ * new unit.
  * @throws WorkingUnitError `workingUnit/ended` when the unit has ended
  */
 export function followup(unit, incoming) {
@@ -185,6 +196,62 @@ export function followup(unit, incoming) {
   }
   if (queued.state === 'running') return queued
   return openAssignment(queued, at)
+}
+
+/**
+ * Add the notice that the policy changed to a unit that has not ended, and
+ * queue it. The mandate is not touched: the unit continues under what was
+ * granted, and the worker reads what it must keep within.
+ *
+ * The id includes `at`, so two changes between the same two versions still
+ * record two notices; a notice already recorded is not added twice.
+ *
+ * @param unit the current unit
+ * @param change `from`, `to`, the `rules` the policy defines now, and `at`
+ * @returns the next unit, or the same unit when it has ended or holds the notice
+ */
+export function policyChanged(unit, change) {
+  if (unit.state === 'ended') return unit
+  const at = change.at ?? unit.updatedAt
+  const id = `${unit.id}/input-policy-${change.from}-${change.to}-${at}`
+  if (unit.inputs.some((input) => input.id === id)) return unit
+  const input = {
+    id,
+    kind: 'policy-changed',
+    text: policyNotice(change.rules ?? []),
+    ref: unit.mandate?.policyVersion ?? change.from,
+    from: change.from,
+    to: change.to,
+    rules: change.rules ?? [],
+    source: 'policy',
+    at,
+  }
+  return {
+    ...unit,
+    inputs: [...unit.inputs, input],
+    undelivered: [...unit.undelivered, input.id],
+    updatedAt: at,
+  }
+}
+
+/**
+ * Whether a unit hears of a policy change: it has not ended, and it was opened
+ * under other rules than the ones now in force.
+ * @returns `true` when the unit is notified
+ */
+export function affectedByPolicyChange(unit, from, to) {
+  if (unit.state === 'ended') return false
+  if (from === to) return false
+  return unit.mandate?.policyVersion !== to
+}
+
+/** The text a worker reads when the policy changed under it; the prototype's `policyMessage`, narrowed to rules. */
+export function policyNotice(rules) {
+  return [
+    'Policy change: the rules that bear on this working unit changed.',
+    ...rules.filter((rule) => rule.enabled !== false).map((rule) => `Rule ${rule.name ?? rule.id} (${rule.id}) now reads: ${rule.instruction}`),
+    'The mandate you were given stands: finish the current assignment within it, and take on nothing outside it.',
+  ].join('\n')
 }
 
 /** End the unit; ending is final. */

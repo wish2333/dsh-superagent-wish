@@ -1,4 +1,4 @@
-import { begin, dispatch, followup as followupState, report as reportState } from './state.js'
+import { affectedByPolicyChange, begin, dispatch, followup as followupState, policyChanged as policyChangedState, report as reportState } from './state.js'
 import { DOMAIN_NAME, workingUnitTables } from './schema.js'
 
 /** Domain and table names must match the Host's `^[a-z][a-z0-9_]*$`. */
@@ -159,6 +159,27 @@ export async function openWorkingUnits(ctx) {
       return write(dispatch(unit, { state: 'start', at: at() }))
     },
 
+    /**
+     * Record that the policy changed on every unit it bears on, oldest first, so
+     * their notices queue in the order the units were opened. A unit that ended,
+     * or that was opened under the rules now in force, is left alone; no unit's
+     * mandate changes, and no unit's state does.
+     *
+     * @param change `from`, `to` and the `rules` the policy now holds
+     * @returns the ids of the units it notified, in order
+     */
+    async policyChanged(change) {
+      const when = at()
+      const notified = []
+      for (const id of this.list().map((unit) => unit.id)) {
+        const unit = read(id)
+        if (!affectedByPolicyChange(unit, change.from, change.to)) continue
+        await write(policyChangedState(unit, { ...change, at: when }))
+        notified.push(id)
+      }
+      return notified
+    },
+
     /** Record that input reached the worker. */
     async deliver(id, inputIds) {
       const unit = read(id)
@@ -188,3 +209,29 @@ export async function openWorkingUnits(ctx) {
   }
 }
 
+
+/**
+ * One store per storage medium, shared by every scope that opens it.
+ *
+ * The plugin opens its tables from the manager, from the Partner preset and from
+ * each Worker preset, and those are separate scopes: a store each would be a
+ * separate handle over the same records, and a write on one would not be what
+ * the others read. One handle per medium keeps every scope on the same rows,
+ * which is what the queue's pump depends on.
+ */
+const stores = new WeakMap()
+
+/**
+ * The store for `ctx`'s medium, opened once.
+ *
+ * The domain is released by the first opener's `ctx.effect`, so it lives as long
+ * as the plugin; a later caller joins the same handle.
+ *
+ * @param ctx a plugin context that provides `storageDomain`
+ * @returns the shared store
+ */
+export function sharedStore(ctx) {
+  const medium = ctx.storageDomain
+  if (!stores.has(medium)) stores.set(medium, openWorkingUnits(ctx))
+  return stores.get(medium)
+}

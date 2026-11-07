@@ -73,6 +73,27 @@ const stringList = (value, path) => {
   return value.map((item, index) => checkString(item, `${path}[${index}]`))
 }
 
+const rulesList = (value, path) => {
+  if (!Array.isArray(value)) fail(path, 'expected a list of rules')
+  return value.map((rule, index) => nested(record({
+    id: requiredString,
+    name: optionalString,
+    enabled: (enabled, field) => {
+      if (enabled === undefined) return undefined
+      if (typeof enabled !== 'boolean') fail(field, 'expected true or false')
+      return enabled
+    },
+    instruction: requiredString,
+  }))(rule, `${path}[${index}]`))
+}
+
+/** A model a dispatch named: the provider and model id, with an optional reasoning effort. */
+const optionalModel = (value, path) => {
+  if (value === undefined) return undefined
+  const parsed = record({ provider: requiredString, model: requiredString, reasoningEffort: optionalString }).parse(value)
+  return { provider: parsed.provider, model: parsed.model, ...(parsed.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.reasoningEffort }) }
+}
+
 const reportFields = {
   state: requiredOneOf('progress', 'waiting', 'ready', 'blocked', 'failed', 'dropped'),
   summary: requiredString,
@@ -93,6 +114,9 @@ const workingUnitRecord = record({
   partnerSessionId: requiredString,
   workerSessionId: requiredString,
   directory: requiredString,
+  // The model a dispatch named, if it named one: a queued unit selects it when
+  // it starts, so the choice outlives the call that made it.
+  model: optionalModel,
   // The ids of the unit's rows; each row lives in its own table.
   inputs: stringList,
   undelivered: stringList,
@@ -113,6 +137,13 @@ const inputRecord = record({
   text: requiredString,
   source: requiredString,
   at: requiredString,
+  // A notice that the policy changed carries its kind and both versions; a
+  // plain input carries neither.
+  kind: optionalString,
+  ref: optionalString,
+  from: optionalString,
+  to: optionalString,
+  rules: (value, path) => (value === undefined ? undefined : rulesList(value, path)),
   deliveredTo: optionalString,
   readAt: optionalString,
 })
@@ -146,3 +177,25 @@ export const workingUnitTables = {
 
 /** Domain name; must match the Host's `^[a-z][a-z0-9_]*$`. */
 export const DOMAIN_NAME = 'working_units'
+
+const sourcesRecord = (value, path) => {
+  checkObject(value, path)
+  return Object.fromEntries(Object.entries(value).map(([id, config]) => [id, checkObject(config, `${path}.${id}`)]))
+}
+
+/**
+ * The policy record's fields. A field that names a block of the policy is the
+ * block's storage; the record also keeps the version derived from those blocks
+ * and when it was last written.
+ */
+const policyRecord = record({
+  rules: rulesList,
+  sources: sourcesRecord,
+  version: requiredString,
+  updatedAt: requiredString,
+})
+
+/** Record schemas of the policy table; the policy store validates every row with them. */
+export const policyTables = {
+  policy: policyRecord,
+}
