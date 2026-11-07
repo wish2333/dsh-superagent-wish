@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost } from './host-fake.js'
-import { apply as mountPartner, dispatch, reportChannels } from '../partner.js'
+import { apply as mountPartner, dispatch } from '../partner.js'
+import { getReportChannel } from '../channel-registry.js'
 import { report } from '../report.js'
 
 /** A Partner context and one dispatched worker session, wired through the real channel. */
@@ -36,7 +37,7 @@ async function dispatchedWorker() {
   const workerCtx = {
     session: { id: workerSessionId },
     agents: { get: () => ({ session: {} }), turnBoundaryOf: () => ({ lastTurn: 1 }) },
-    reportChannel: reportChannels.get(host.ctx),
+    reportChannel: getReportChannel(),
   }
   return { host, steered, workerSessionId, workerCtx }
 }

@@ -4,6 +4,7 @@
  * the Partner session.
  */
 
+import { getReportChannel } from './channel-registry.js'
 import { REPORT_STATES } from './tools.js'
 
 /** @returns the tool result shown to the worker. */
@@ -16,7 +17,8 @@ export function report(ctx, args, exec) {
   }
   const sessionId = sessionIdOf(ctx, exec)
   const turn = ctx.agents && sessionId ? turnOf(ctx, sessionId) : 0
-  if (ctx.reportChannel && sessionId) ctx.reportChannel.record(sessionId, turn, args.state, args.summary)
+  const channel = getReportChannel()
+  if (channel && sessionId) channel.record(sessionId, turn, args.state, args.summary)
   return { content: [{ type: 'text', text: `Reported ${args.state} to Partner.` }] }
 }
 
@@ -26,7 +28,7 @@ function sessionIdOf(ctx, exec) {
 }
 
 function turnOf(ctx, sessionId) {
-  const agent = ctx.agents.get(sessionId)
+  const agent = ctx.agents && typeof ctx.agents.get === 'function' ? ctx.agents.get(sessionId) : undefined
   const boundary = agent && typeof ctx.agents.turnBoundaryOf === 'function' ? ctx.agents.turnBoundaryOf(agent.session) : undefined
   return boundary && boundary.lastTurn !== undefined ? boundary.lastTurn : 0
 }

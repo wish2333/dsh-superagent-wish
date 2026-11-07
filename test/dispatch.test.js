@@ -15,12 +15,18 @@ function hostWithSession({ existing = false } = {}) {
   agent.followup = async (message) => {
     host.calls.push({ name: 'agent.followup', args: message })
   }
-  let resolutions = 0
+  // Resolve per session id, the way the Host does; one global counter would let a
+  // second dispatch see the first one's not-found as a hit.
+  const live = new Map()
   host.ctx.sessionController.resolveAgent = async (sessionId) => {
-    resolutions += 1
     host.calls.push({ name: 'sessionController.resolveAgent', args: sessionId })
     if (existing) return { agent }
-    return resolutions === 1 ? { error: { code: 'session/not-found' } } : { agent }
+    const found = live.get(sessionId)
+    return found ? { agent: found } : { error: { code: 'session/not-found' } }
+  }
+  host.ctx.sessionController.create = async (input) => {
+    host.calls.push({ name: 'sessionController.create', args: input })
+    live.set(input.sessionId, agent)
   }
   return { host, agent }
 }
@@ -165,4 +171,17 @@ test('the dispatched message carries the identity and source DSH requires', asyn
 test('two dispatches never reuse one message id', async () => {
   const { userMessage } = await import('../messages.js')
   assert.notEqual(userMessage('a').id, userMessage('a').id)
+})
+
+// A title-derived session id made the next dispatch reuse whatever session that
+// title already owned, including a broken one. Each dispatch gets its own.
+test('two dispatches of one title create two sessions', async () => {
+  const { host } = hostWithSession()
+  await dispatch({ ...CONTEXT, ...host.ctx }, ARGS, CALLER)
+  await dispatch({ ...CONTEXT, ...host.ctx }, ARGS, CALLER)
+
+  const ids = host.callsTo('sessionController.create').map((call) => call.args.sessionId)
+  assert.equal(ids.length, 2)
+  assert.notEqual(ids[0], ids[1])
+  assert.ok(ids[0].startsWith('superagent-wish-implementer-'))
 })

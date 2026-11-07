@@ -23,7 +23,8 @@
     "locale/*.json",
     "icon.svg",
     "report-channel.js",
-    "messages.js"
+    "messages.js",
+    "channel-registry.js"
   ],
   "dsh": {
     "bundle": {

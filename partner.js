@@ -16,6 +16,7 @@ export const WORKER_SERVICES = ['sessionController', 'workspaceRegistry', 'permi
 
 import { mkdir } from 'node:fs/promises'
 
+import { setReportChannel } from './channel-registry.js'
 import { userMessage } from './messages.js'
 import { createReportChannel } from './report-channel.js'
 import { DISPATCH_TOOL, WORKER_KINDS } from './tools.js'
@@ -36,16 +37,12 @@ function failed(reason) {
  * every dispatched worker, then relays a worker's report into this session.
  * @returns the channel, or undefined when the Host exposes no session identity
  */
-/** Channels created by `bindReportChannel`, keyed by the context that created them. */
-export const reportChannels = new WeakMap()
-
 export function bindReportChannel(ctx) {
   if (!ctx.tools || typeof ctx.on !== 'function') return undefined
   const channel = createReportChannel({
     getPartnerAgent: (sessionId) => (ctx.agents && sessionId ? ctx.agents.get(sessionId) : undefined),
   })
   ctx.effect(() => ctx.on('agent/status', (payload) => channel.onStatus(payload)))
-  reportChannels.set(ctx, channel)
   return channel
 }
 
@@ -66,7 +63,9 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
   }
 
   try {
-    const sessionId = `superagent-wish-${args.kind}-${slug(args.title)}`
+    // One session per dispatch. A title-derived id would make the next dispatch
+    // reuse whatever session that title already owns, including a broken one.
+    const sessionId = `superagent-wish-${args.kind}-${slug(args.title)}-${uniqueSuffix()}`
 
     let resolved = await sessionController.resolveAgent(sessionId)
     let created = false
@@ -100,6 +99,11 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
   } catch (error) {
     return failed(`Dispatch failed: ${error && error.message ? error.message : String(error)}`)
   }
+}
+
+/** @returns a short suffix that keeps two dispatches of one title apart. */
+function uniqueSuffix() {
+  return globalThis.crypto.randomUUID().slice(0, 8)
 }
 
 function slug(title) {
@@ -224,6 +228,9 @@ export function apply(ctx) {
   // leave the tool absent instead of failing the whole preset.
   ctx.inject(WORKER_SERVICES, (workerCtx) => {
     const reportChannel = bindReportChannel(workerCtx)
+    // Publish it for the worker presets, which run in their own scopes.
+    setReportChannel(reportChannel)
+    workerCtx.effect(() => () => setReportChannel(undefined))
     workerCtx.effect(() =>
       workerCtx.tools.register({ ...DISPATCH_TOOL, execute: (args, exec) => dispatch(workerCtx, args, exec, reportChannel) }),
     )
