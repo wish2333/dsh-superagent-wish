@@ -16,6 +16,7 @@ export const WORKER_SERVICES = ['sessionController', 'workspaceRegistry', 'permi
 
 import { mkdir } from 'node:fs/promises'
 
+import { userMessage } from './messages.js'
 import { createReportChannel } from './report-channel.js'
 import { DISPATCH_TOOL, WORKER_KINDS } from './tools.js'
 
@@ -88,7 +89,7 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
       reportChannel.adoptPartner(caller)
       reportChannel.track(sessionId)
     }
-    await agent.followup({ role: 'user', content: [{ type: 'text', text: args.body }] })
+    await agent.followup(userMessage(args.body))
 
     return {
       content: [{

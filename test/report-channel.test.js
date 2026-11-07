@@ -87,3 +87,12 @@ test('no partner agent means the report is dropped, not thrown', () => {
   reportChannel.configure({ partnerSessionId: 'partner-1', workerSessionId: 'worker-1' })
   assert.doesNotThrow(() => reportChannel.record('worker-1', 1, 'ready', 'done'))
 })
+
+test('a relayed report is a complete user message', () => {
+  const { reportChannel, steered } = channel()
+  reportChannel.record('worker-1', 1, 'blocked', 'scope is unclear')
+  const message = steered[0]
+  assert.equal(message.role, 'user')
+  assert.equal(typeof message.id, 'string')
+  assert.deepEqual(message.source, { kind: 'user' })
+})

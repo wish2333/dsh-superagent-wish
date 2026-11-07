@@ -11,6 +11,7 @@
  * so a retried delivery is dropped instead of reaching Partner twice.
  */
 
+import { userMessage } from './messages.js'
 import { REPORT_STATES } from './tools.js'
 
 export const WAITING_SUMMARY = 'Worker ended its turn without a final report.'
@@ -45,7 +46,7 @@ export function createReportChannel(deps) {
     const target = partnerSessionId ?? workerId
     const agent = deps.getPartnerAgent(target)
     if (!agent || typeof agent.steer !== 'function') return false
-    const message = { role: 'user', content: [{ type: 'text', text: formatReport(workerId, report.state, report.summary) }], id }
+    const message = userMessage(formatReport(workerId, report.state, report.summary), id)
     agent.steer(message)
     if (deps.onRelay) deps.onRelay(message.content[0].text, id)
     return true

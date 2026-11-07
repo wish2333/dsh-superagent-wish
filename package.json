@@ -22,7 +22,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "report-channel.js"
+    "report-channel.js",
+    "messages.js"
   ],
   "dsh": {
     "bundle": {

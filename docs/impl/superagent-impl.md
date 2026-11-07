@@ -33,7 +33,7 @@ Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，
 | 3. 取到会话 | `ctx.sessionController.resolveAgent(sessionId)` | 返回 live Agent |
 | 4. 设权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` | 与原型一致 |
 | 5. 命名 | `ctx.sessionController.rename({ sessionId, title })` | 标题取任务标题 |
-| 6. 送任务 | `agent` 的 `followup(message)` / `steer(message)` / `inject(message)` | 原型的 `AgentDelivery.send`（`src/app/delivery.ts:66-85`）是插件自己的类，不是 Host 服务；它用 `requestId` 去重后落到这三个方法 |
+| 6. 送任务 | `agent.followup(message)`，`message` 形如 `{ id, role: 'user', content, source: { kind: 'user' } }` | 缺 `id` 或 `source` 的消息不会投递，会话建出来是空的 | 原型的 `AgentDelivery.send`（`src/app/delivery.ts:66-85`）是插件自己的类，不是 Host 服务；它用 `requestId` 去重后落到这三个方法 |
 | 7. 收回报 | `partner_report` 工具 → 队列 → `agent.steer(report)` | Worker 主动回报，Partner 整合后带回给 wish |
 
 `followup` 送下一轮任务，`steer` 改动当前轮，`inject` 只写入历史不唤醒会话。回报用 `steer`，不用 `inject`：Partner 需要被唤醒才处理回报。

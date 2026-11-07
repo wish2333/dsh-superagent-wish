@@ -147,3 +147,22 @@ test('the dispatch path declares the service that supplies the base directory', 
   const { WORKER_SERVICES } = await import('../partner.js')
   assert.ok(WORKER_SERVICES.includes('workingDirectory'))
 })
+
+// DSH's inbox takes { id, content, source, role }. A message without id/source
+// is dropped: the worker session is created but stays blank, with no error.
+test('the dispatched message carries the identity and source DSH requires', async () => {
+  const { host } = hostWithSession()
+  await dispatch({ ...CONTEXT, ...host.ctx }, ARGS, CALLER)
+
+  const message = host.callsTo('agent.followup')[0].args
+  assert.equal(message.role, 'user')
+  assert.equal(typeof message.id, 'string')
+  assert.ok(message.id.length > 0)
+  assert.deepEqual(message.source, { kind: 'user' })
+  assert.deepEqual(message.content, [{ type: 'text', text: ARGS.body }])
+})
+
+test('two dispatches never reuse one message id', async () => {
+  const { userMessage } = await import('../messages.js')
+  assert.notEqual(userMessage('a').id, userMessage('a').id)
+})
