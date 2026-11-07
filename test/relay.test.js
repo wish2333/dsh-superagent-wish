@@ -349,3 +349,58 @@ test('a unit whose round has ended gets no waiting when its worker goes idle', a
     await fake.cleanup()
   }
 })
+
+test('a discoverer ends on its ready report, and its follow-up opens a new unit', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake, 'discoverer')
+    await report(fake, unitId, { state: 'ready', summary: 'Wrote three options to options.md.' }, 'discoverer')
+    assert.equal((await listed(fake, unitId)).state, 'ended')
+    // New work after an end is Partner's call: the ended unit takes no more input.
+    const refused = textOf(await call(fake, 'partner_followup', { unitId, text: 'And a fourth option.' }))
+    assert.match(refused, /has ended/)
+    assert.equal((await listed(fake, unitId)).state, 'ended')
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+test('an implementer waits for the decision on its ready report, and a follow-up continues the same unit', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake, 'implementer')
+    const workerId = `superagent-wish-${unitId}`
+    await report(fake, unitId, { state: 'ready', summary: 'Delivered the tables under src/.' })
+    assert.equal((await listed(fake, unitId)).state, 'waiting-for-decision')
+    const accepted = textOf(await call(fake, 'partner_followup', { unitId, text: 'Make it tolerate holes.' }))
+    assert.match(accepted, new RegExp(`Sent to ${unitId}`))
+    const unit = await listed(fake, unitId)
+    assert.equal(unit.state, 'running', 'the follow-up continues the unit instead of opening one')
+    // The same Session and the same directory receive it.
+    const delivered = worker(fake, unitId).delivered.at(-1)
+    assert.equal(delivered.mode, 'followup')
+    assert.equal(delivered.message.content[0].text, 'Make it tolerate holes.')
+    assert.equal(worker(fake, unitId).id, workerId)
+    // No second unit was opened.
+    const all = (await call(fake, 'partner_list', {})).record.units
+    assert.deepEqual(all.map((item) => item.id), [unitId])
+  } finally {
+    await fake.cleanup()
+  }
+})
+
+test('a report is the only message Partner takes from a Worker session, and it says whose it is', async () => {
+  const fake = await host()
+  try {
+    const unitId = await oneUnit(fake)
+    await report(fake, unitId, { state: 'failed', summary: 'The tables need a migration this task did not allow.' })
+    const fromWorker = fake.partner.delivered.filter((delivery) => delivery.message.source?.senderSessionId === `superagent-wish-${unitId}`)
+    assert.equal(fromWorker.length, 1)
+    assert.equal(fromWorker[0].message.source.kind, 'agent-message')
+    assert.equal(fromWorker[0].message.source.form, 'relay')
+    // Never as wish's own words, which is what a message without that source would read as.
+    assert.notDeepEqual(fromWorker[0].message.source, { kind: 'user' })
+  } finally {
+    await fake.cleanup()
+  }
+})
