@@ -1,6 +1,7 @@
 /**
- * The policy: the rules a Worker works under, the event-source configuration,
- * and the version both of them derive to.
+ * The policy: the rules a Worker works under, and the version they derive to.
+ * The record holds `rules` and `sources`; `sources` is the place an event
+ * source's configuration goes, and the version covers it already.
  *
  * The version is a hash of the policy's content, never a counter, so the same
  * rules always give the same version and a restart does not change it. A
@@ -12,8 +13,8 @@
  *
  *   { rules: [], sources: {} }
  *
- * The store keeps the record in the plugin's own domain, which the working unit
- * tables also open.
+ * The store keeps the record in a domain of its own, beside the working unit
+ * tables.
  */
 
 import { createHash } from 'node:crypto'
