@@ -6,14 +6,23 @@
   "type": "module",
   "exports": {
     ".": "./index.js",
+    "./partner": "./partner.js",
+    "./worker-discoverer": "./worker-discoverer.js",
+    "./worker-implementer": "./worker-implementer.js",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
   },
   "files": [
     "index.js",
+    "partner.js",
+    "worker-discoverer.js",
+    "worker-implementer.js",
+    "worker-shared.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "report-channel.js"
   ],
   "dsh": {
     "bundle": {
@@ -26,5 +35,8 @@
     "deepseek-harness",
     "agent-preset"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/"
+  }
 }

@@ -13,7 +13,7 @@ When the Partner preset is selected in a session, the agent receives the collabo
 
 ## Requirements
 
-- DeepSeek Harness with the `agentPresets` and `systemPrompt` Host services.
+- DeepSeek Harness with the `agentPresets`, `systemPrompt` and `tools` Host services.
 - For Worker dispatch: the `sessionController`, `workspaceRegistry`, `permissionPresets`, and `agents` Host services. A Worker is a separate DSH session, not a subagent (R28).
 
 ## Installation
@@ -32,7 +32,15 @@ After installation, select the **Partner** preset when starting a new session.
 
 ```
 .
-├── index.js                    Host plugin (two roles: manager + instructions)
+├── index.js                    Manager: registers the three presets
+├── partner.js                  Partner preset: collaboration prompt + partner_dispatch
+├── worker-discoverer.js        启发者 preset: read-only whitelist + partner_report
+├── worker-implementer.js       执行者 preset: write tools + partner_report
+├── worker-shared.js            Prompt rules both worker roles share
+├── tools.js                    Tool definitions and worker-kind to preset map
+├── report.js                   Worker-side report tool
+├── report-channel.js           Host side: report relay and the waiting fallback
+├── test/                       node:test suite against a fake Host context
 ├── cordis.patch.yml            Bundle patch — inserts the manager entry
 ├── locale/
 │   ├── en.json                 Plugin metadata (English)
@@ -40,6 +48,7 @@ After installation, select the **Partner** preset when starting a new session.
 ├── icon.svg                    Hub-and-spoke icon representing worker coordination
 ├── docs/
 │   ├── REQUIREMENTS.md         Numbered requirement list
+│   ├── adr/                    Decision records
 │   ├── spec/
 │   │   ├── framework.md        Four-layer framework
 │   │   ├── interaction-spec.md Partner behavior spec
@@ -55,7 +64,7 @@ After installation, select the **Partner** preset when starting a new session.
 
 ## Status
 
-The Partner preset and its system-prompt injection are implemented. Worker session creation is designed in `docs/impl/superagent-impl.md` and not implemented yet. Workers are separate DSH sessions created by Partner (R28); the dispatch chain follows the `dsh-superagent` prototype.
+All three presets are registered, each from its own submodule (ADR-0002). Partner carries `partner_dispatch`; both workers carry `partner_report`. A report is relayed into the Partner session with `steer`; `progress` does not wake Partner, and a worker turning idle without a final report produces a `waiting` report. `npm test` covers the Host boundary and the relay.
 
 ## License
 
