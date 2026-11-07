@@ -97,7 +97,7 @@ Secretary 是 Partner 新会话创建时随之创建的独立会话。普通会�
 
 ## 六、Partner 的工具面
 
-Partner 挂五个工具，两个 Worker preset 各挂报告一个，Secretary 挂判断和巡查两个。
+Partner 挂五个工具，两个 Worker preset 各挂报告一个，Secretary 挂判断、巡查和读对话三个。
 
 | 工具 | 挂在哪个 preset | 作用 |
 |---|---|---|
@@ -109,6 +109,7 @@ Partner 挂五个工具，两个 Worker preset 各挂报告一个，Secretary �
 | `partner_report` | 两个 Worker preset | Worker 报状态和摘要 |
 | `partner_decide` | Secretary | 把对一个事件的判断写回表：开成工作单元，或判掉并记下理由 |
 | `partner_patrol` | Secretary | 定时任务到点时记录一次巡查；只写表，不打扰 wish |
+| `partner_read_conversation` | Secretary | 只读地读当前 Partner 对话最近的几条消息，供判断某个事件此刻值不值得开活 |
 
 Partner 不能直接结束工作单元。wish 说“这个活不要了”时，Partner 用 `partner_stop` 并明确说明，是否要单独的工具留到实际使用后再定。
 
