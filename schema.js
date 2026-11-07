@@ -163,7 +163,18 @@ const assignmentRecord = record({
 
 const mandateRecord = record({
   unitId: requiredString,
+  // The authorization: the work the unit was dispatched with, and everything a
+  // later input widened it by. `scope` is what the Worker is authorized to do.
   scope: requiredString,
+  // What the scope was before the last widening, oldest first; empty until one.
+  previousScopes: (value, path) => {
+    if (value === undefined) return []
+    const scopes = stringList(value, path)
+    for (const [index, scope] of scopes.entries()) {
+      if (!scope.trim()) fail(`${path}[${index}] must not be empty`)
+    }
+    return scopes
+  },
   strength: requiredOneOf('explicit', 'inferred'),
   policyVersion: requiredString,
   basis: requiredString,

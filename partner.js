@@ -83,6 +83,8 @@ export function describeUnit(unit, now = Date.now()) {
     state: unit.state,
     since: since_ ? `${since(since_, now)} ${unit.state === 'ended' ? 'ago' : 'in this state'}` : 'unknown',
   }
+  // What the unit may do, and what it was authorized for before an input widened it.
+  line.scope = { current: unit.mandate?.scope ?? '', previous: unit.mandate?.previousScopes ?? [] }
   const report = unit.assignments.at(-1)?.report
   if (report) line.lastReport = { state: report.state, summary: report.summary }
   if (unit.undelivered?.length) line.queuedInputs = unit.undelivered.length
@@ -330,7 +332,9 @@ export async function dispatch(ctx, store, policy, slots, args, exec, options = 
       ...unit,
       text: body,
       source: origin,
-      scope: title,
+      // The authorization is what the Worker was told to do. The title only
+      // names the unit, and says nothing about what it may do.
+      scope: body,
       strength: 'explicit',
       // The version the policy has now, so a later rule change can tell which
       // units were opened under rules the current policy no longer states.
@@ -373,7 +377,8 @@ async function startNow(ctx, store, unit, { session }) {
   const created = await store.dispatch({
     ...unit,
     source: unit.source ?? 'wish',
-    scope: unit.title,
+    // The dispatch's first input is what a queued unit was authorized for too.
+    scope: unit.text,
     strength: 'explicit',
     basis: 'wish',
   })

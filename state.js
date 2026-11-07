@@ -51,6 +51,40 @@ export function begin(unit, mandate) {
 }
 
 /**
+ * Whether an input widens what the Worker is authorized to do: it asks for
+ * something the authorization does not cover yet, and it is not one of the
+ * plugin's own notices.
+ * @param input the input being queued, with `text` and its `kind`
+ * @param mandate the mandate the unit was dispatched under
+ * @returns `true` when the mandate takes it as a widening of the scope
+ */
+function widensScope(input, mandate) {
+  if (input.kind) return false
+  const text = String(input.text ?? '').trim()
+  if (!text) return false
+  const scope = String(mandate?.scope ?? '')
+  return !scope.includes(text)
+}
+
+/**
+ * Add an input that widens the work to the mandate: the scope becomes the
+ * authorization the unit had, then this, and what it had stays readable in
+ * `previousScopes`. Nothing else about the mandate changes, and the inputs are
+ * not part of this: only the scope moves.
+ * @param unit the unit before the input was queued
+ * @param input the input, as {@link widensScope} reads it
+ * @returns the unit with the widened mandate
+ */
+function widen(unit, input) {
+  const mandate = unit.mandate ?? {}
+  const scope = `${mandate.scope ?? ''}\n\n${String(input.text).trim()}`.trim()
+  return {
+    ...unit,
+    mandate: { ...mandate, scope, previousScopes: [...(mandate.previousScopes ?? []), mandate.scope ?? ''].filter(Boolean) },
+  }
+}
+
+/**
  * Apply a fact to a working unit.
  * @param unit the current unit
  * @param fact what happened outside a report or new input: `start`, `deliver`, `read`, `stop`
@@ -187,6 +221,11 @@ export function report(unit, incoming) {
  * Add input and queue it, returning a unit waiting for a decision or for input
  * to running with a new assignment.
  *
+ * An input after the first that asks for more also widens the mandate's scope:
+ * the unit is authorized for what wish now asks as well, and the scope it had
+ * stays in `previousScopes`. A unit that was running keeps running; only a unit
+ * waiting for wish gets the new assignment its result would need.
+ *
  * An ended unit is not continued: ending is final, and the same work needs a
  * new unit.
  * @throws WorkingUnitError `workingUnit/ended` when the unit has ended
@@ -194,15 +233,15 @@ export function report(unit, incoming) {
 export function followup(unit, incoming) {
   if (unit.state === 'ended') throw new WorkingUnitError('workingUnit/ended', 'The working unit has ended')
   const at = incoming.at ?? unit.updatedAt
-  const input = { id: `${unit.id}/input-${unit.inputs.length}`, text: incoming.text, source: incoming.source ?? 'wish', at }
-  const queued = {
-    ...unit,
-    inputs: [...unit.inputs, input],
-    undelivered: [...unit.undelivered, input.id],
-    updatedAt: at,
-  }
-  if (queued.state === 'running') return queued
-  return openAssignment(queued, at)
+  const input = { id: `${unit.id}/input-${unit.inputs.length}`, text: incoming.text, source: incoming.source ?? 'wish', at, ...(incoming.kind ? { kind: incoming.kind } : {}) }
+  // The scope grows from the mandate as it was before this input was queued, so
+  // a follow-up that asks for more work becomes what the unit is authorized for.
+  // The first input is what the dispatch authorized, so it adds nothing there.
+  const firstInput = unit.inputs.length === 0
+  const expanded = firstInput || !widensScope(input, unit.mandate) ? unit : widen(unit, input)
+  const withInput = { ...expanded, inputs: [...expanded.inputs, input], undelivered: [...expanded.undelivered, input.id], updatedAt: at }
+  if (withInput.state === 'running') return withInput
+  return openAssignment(withInput, at)
 }
 
 /**

@@ -3,11 +3,12 @@ import assert from 'node:assert/strict'
 import { createHost, createStorageDomain } from './host-fake.js'
 import { openWorkingUnits } from '../working-units.js'
 
+// The dispatch's first input, and the authorization Partner gives it: a unit
+// is authorized for the work it was told to do, not for its title.
 const DISPATCH = {
   type: 'implementer',
   title: 'Write the storage layer',
   text: 'Implement the working unit tables',
-  scope: 'src/',
   strength: 'explicit',
   policyVersion: 'policy-1',
 }
@@ -26,8 +27,11 @@ async function open(medium = createStorageDomain()) {
  */
 function start(store, fields = {}) {
   const id = store.nextId()
+  // The mandate a dispatch records is the one it was given: the scope is what
+  // Partner authorized, and the first input does not widen it again.
   return store.dispatch({
     ...DISPATCH,
+    scope: DISPATCH.text,
     ...fields,
     id,
     partnerSessionId: 'partner-1',
@@ -94,10 +98,11 @@ test('the authorization read back keeps its scope, strength and policy version',
 
   const second = await open(createStorageDomain(first.medium.snapshot()))
   const { mandate } = second.store.get(id)
-  assert.deepEqual({ scope: mandate.scope, strength: mandate.strength, policyVersion: mandate.policyVersion }, {
+  assert.deepEqual(mandate, {
     scope: 'src/worker',
     strength: 'inferred',
     policyVersion: 'policy-9',
+    basis: 'wish',
   })
 })
 
