@@ -142,3 +142,39 @@ export const workingUnitTables = {
 
 /** Domain name; must match the Host's `^[a-z][a-z0-9_]*$`. */
 export const DOMAIN_NAME = 'working_units'
+
+const rulesList = (value, path) => {
+  if (!Array.isArray(value)) fail(path, 'expected a list of rules')
+  return value.map((rule, index) => nested(record({
+    id: requiredString,
+    name: optionalString,
+    enabled: (enabled, field) => {
+      if (enabled === undefined) return undefined
+      if (typeof enabled !== 'boolean') fail(field, 'expected true or false')
+      return enabled
+    },
+    instruction: requiredString,
+  }))(rule, `${path}[${index}]`))
+}
+
+const sourcesRecord = (value, path) => {
+  checkObject(value, path)
+  return Object.fromEntries(Object.entries(value).map(([id, config]) => [id, checkObject(config, `${path}.${id}`)]))
+}
+
+/**
+ * The policy record's fields. A field that names a block of the policy is the
+ * block's storage; the record also keeps the version derived from those blocks
+ * and when it was last written.
+ */
+const policyRecord = record({
+  rules: rulesList,
+  sources: sourcesRecord,
+  version: requiredString,
+  updatedAt: requiredString,
+})
+
+/** Record schemas of the policy table; the policy store validates every row with them. */
+export const policyTables = {
+  policy: policyRecord,
+}

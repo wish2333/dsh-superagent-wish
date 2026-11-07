@@ -10,6 +10,7 @@
  */
 
 import { openWorkingUnits } from './working-units.js'
+import { openPolicy } from './policy.js'
 import { deliver, describe, ensureWorker, selectModel, stop, unitDirectory, WORKER_TYPES, workerSessionId } from './sessions.js'
 
 export const inject = ['systemPrompt', 'tools']
@@ -208,7 +209,7 @@ function guarded(body) {
  * unit is recorded only after the Worker opened, so a failed dispatch leaves no
  * unit behind.
  */
-export async function dispatch(ctx, store, args, exec) {
+export async function dispatch(ctx, store, policy, args, exec) {
   const session = exec?.agent?.id
   if (!session) {
     return refused('Dispatch refused: this call carries no calling session, so a Worker would have no one to report to.')
@@ -267,7 +268,9 @@ export async function dispatch(ctx, store, args, exec) {
     source: 'wish',
     scope: title,
     strength: 'explicit',
-    policyVersion: 'policy-1',
+    // The version the policy has now, so a later rule change can tell which
+    // units were opened under rules the current policy no longer states.
+    policyVersion: policy.version(),
     basis: 'wish',
   })
 
@@ -342,10 +345,13 @@ export function apply(ctx) {
     // without a storage domain never reaches this line, and the tools are absent.
     workerCtx.inject(STORE_SERVICES, (storeCtx) => {
       let opened
+      let openedPolicy
       const store = () => (opened ??= openWorkingUnits(storeCtx))
+      const policy = () => (openedPolicy ??= openPolicy(storeCtx))
       storeCtx.effect(() => () => { opened?.then((handle) => handle.close()).catch(() => {}) })
+      storeCtx.effect(() => () => { openedPolicy?.then((handle) => handle.close()).catch(() => {}) })
       const bodies = {
-        partner_dispatch: guarded((args, exec) => store().then((handle) => dispatch(workerCtx, handle, args, exec))),
+        partner_dispatch: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => dispatch(workerCtx, handle, rules, args, exec))),
         partner_followup: guarded((args, exec) => store().then((handle) => followup(workerCtx, handle, args, exec))),
         partner_stop: guarded((args) => store().then((handle) => stopUnit(workerCtx, handle, args))),
         partner_list: guarded((args) => store().then((handle) => listUnits(handle, args))),
