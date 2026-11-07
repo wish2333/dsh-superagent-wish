@@ -73,6 +73,20 @@ const stringList = (value, path) => {
   return value.map((item, index) => checkString(item, `${path}[${index}]`))
 }
 
+const rulesList = (value, path) => {
+  if (!Array.isArray(value)) fail(path, 'expected a list of rules')
+  return value.map((rule, index) => nested(record({
+    id: requiredString,
+    name: optionalString,
+    enabled: (enabled, field) => {
+      if (enabled === undefined) return undefined
+      if (typeof enabled !== 'boolean') fail(field, 'expected true or false')
+      return enabled
+    },
+    instruction: requiredString,
+  }))(rule, `${path}[${index}]`))
+}
+
 const reportFields = {
   state: requiredOneOf('progress', 'waiting', 'ready', 'blocked', 'failed', 'dropped'),
   summary: requiredString,
@@ -109,6 +123,13 @@ const inputRecord = record({
   text: requiredString,
   source: requiredString,
   at: requiredString,
+  // A notice that the policy changed carries its kind and both versions; a
+  // plain input carries neither.
+  kind: optionalString,
+  ref: optionalString,
+  from: optionalString,
+  to: optionalString,
+  rules: (value, path) => (value === undefined ? undefined : rulesList(value, path)),
   deliveredTo: optionalString,
   readAt: optionalString,
 })
@@ -142,20 +163,6 @@ export const workingUnitTables = {
 
 /** Domain name; must match the Host's `^[a-z][a-z0-9_]*$`. */
 export const DOMAIN_NAME = 'working_units'
-
-const rulesList = (value, path) => {
-  if (!Array.isArray(value)) fail(path, 'expected a list of rules')
-  return value.map((rule, index) => nested(record({
-    id: requiredString,
-    name: optionalString,
-    enabled: (enabled, field) => {
-      if (enabled === undefined) return undefined
-      if (typeof enabled !== 'boolean') fail(field, 'expected true or false')
-      return enabled
-    },
-    instruction: requiredString,
-  }))(rule, `${path}[${index}]`))
-}
 
 const sourcesRecord = (value, path) => {
   checkObject(value, path)

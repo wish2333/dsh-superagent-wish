@@ -10,7 +10,8 @@ import { apply as openManager } from '@wish2333/dsh-superagent-wish'
 import * as partnerModule from '@wish2333/dsh-superagent-wish/partner'
 import * as implementer from '@wish2333/dsh-superagent-wish/worker-implementer'
 import { createHost, createStorageDomain } from './host-fake.js'
-import { openPolicy } from '../policy.js'
+import { openPolicy, savePolicy } from '../policy.js'
+import { openWorkingUnits } from '../working-units.js'
 
 const PARTNER = 'partner-1'
 const DISCOVERER_PRESET = 'superagent-wish-discoverer'
@@ -160,3 +161,115 @@ test('the version survives a restart: a reloaded plugin dispatches under the sam
     await before.cleanup()
   }
 })
+
+/** The inputs the store keeps for `unitId`, in order. */
+function inputsOf(host, unitId) {
+  const record = stored(host, unitId)
+  return record.inputs.map((id) => host.storageDomain.contents('inputs')[id])
+}
+
+test('a rule change reaches the unit still running, as an input its worker reads', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', DISPATCH)
+    const rules = [{ id: 'scope', name: 'Scope', enabled: true, instruction: 'Stay inside src/.' }]
+    const before = mandate(host, 'unit-1').policyVersion
+    const result = await changeRules(host, rules)
+
+    assert.equal(result.notified.includes('unit-1'), true, 'the running unit is notified')
+    const notice = inputsOf(host, 'unit-1').at(-1)
+    assert.equal(notice.kind, 'policy-changed')
+    assert.equal(notice.from, before)
+    assert.equal(notice.to, result.to)
+    assert.equal(notice.ref, before, 'the input records the version the unit was opened under')
+
+    // The notice reaches the worker, after the input that was queued before it.
+    const delivered = texts(host, 'superagent-wish-unit-1')
+    assert.equal(delivered.length, 2)
+    assert.equal(delivered[0], DISPATCH.body)
+    assert.match(delivered[1], /policy/i)
+    assert.match(delivered[1], /Stay inside src\//, 'the rule as it now reads reaches the worker')
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a rule change does not revoke the mandate of a running unit', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', DISPATCH)
+    const openedUnder = mandate(host, 'unit-1').policyVersion
+    await changeRules(host, [{ id: 'scope', name: 'Scope', enabled: true, instruction: 'Stay inside src/.' }])
+
+    // The unit keeps running under the mandate it was opened with, and still takes work.
+    const record = stored(host, 'unit-1')
+    assert.equal(record.state, 'running')
+    const old = mandate(host, 'unit-1').policyVersion
+    assert.equal(old, openedUnder, 'the mandate still names the version the unit was opened under')
+    const text = textOf(await call(host, 'partner_followup', { unitId: 'unit-1', text: 'One more file.' }))
+    assert.match(text, /Sent to unit-1/)
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a save that changes no rule notifies no unit', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', DISPATCH)
+    // The same rules the unit was opened under: no version change, no notification.
+    const result = await changeRules(host, [])
+    assert.equal(result.to, mandate(host, 'unit-1').policyVersion)
+    assert.deepEqual(result.notified, [], 'the version did not change, so no unit hears of it')
+    assert.equal(texts(host, 'superagent-wish-unit-1').length, 1)
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a rule change reaches a unit waiting for input, and one waiting for a decision', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'First job' })
+    await call(host, 'partner_dispatch', { ...DISPATCH, title: 'Second job' })
+    await call(host, 'partner_report', { state: 'blocked', summary: 'The schema must be decided.' }, 'superagent-wish-unit-1')
+    await call(host, 'partner_report', { state: 'ready', summary: 'Delivered the tables.' }, 'superagent-wish-unit-2')
+    assert.equal(stored(host, 'unit-1').state, 'waiting-for-input')
+    assert.equal(stored(host, 'unit-2').state, 'waiting-for-decision')
+
+    const result = await changeRules(host, [{ id: 'scope', name: 'Scope', enabled: true, instruction: 'Stay inside src/.' }])
+    assert.deepEqual(result.notified, ['unit-1', 'unit-2'], 'oldest first')
+    for (const id of ['unit-1', 'unit-2']) {
+      const notice = inputsOf(host, id).at(-1)
+      assert.equal(notice.kind, 'policy-changed')
+      assert.equal(texts(host, `superagent-wish-${id}`).at(-1), notice.text, 'each worker reads it')
+    }
+  } finally {
+    await host.cleanup()
+  }
+})
+
+test('a rule change leaves an ended unit untouched', async () => {
+  const host = await plugin()
+  try {
+    await call(host, 'partner_dispatch', { ...DISPATCH, type: 'discoverer' })
+    await call(host, 'partner_report', { state: 'ready', summary: 'Wrote three options.' }, 'superagent-wish-unit-1')
+    assert.equal(stored(host, 'unit-1').state, 'ended')
+    const delivered = texts(host, 'superagent-wish-unit-1').length
+    const result = await changeRules(host, [{ id: 'scope', name: 'Scope', enabled: true, instruction: 'Stay inside src/.' }])
+    assert.equal(result.notified.includes('unit-1'), false)
+    assert.equal(texts(host, 'superagent-wish-unit-1').length, delivered)
+  } finally {
+    await host.cleanup()
+  }
+})
+
+/**
+ * Changes the rules the way a settings tool does: through the plugin's own
+ * handles, so the store, the policy and the delivery are the ones the Partner
+ * tools use. The Partner preset exposes them on `handles(address)` for this.
+ */
+async function changeRules(host, rules) {
+  const { store, policy } = await partnerModule.handles(host.ctx)
+  return savePolicy(policy, store, host.ctx, { rules }, { id: PARTNER, header: { cwd: host.base } })
+}

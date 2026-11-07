@@ -333,6 +333,23 @@ export async function listUnits(store, args) {
   return textResult(summary, { units: lines })
 }
 
+/**
+ * The store and the policy the Partner tools read, opened on `ctx`'s medium.
+ *
+ * The tools open these lazily on first use; a settings path needs them before
+ * any tool ran, and needs the same handles so a write is the one the tools then
+ * read. A Host without a storage domain gets an error naming the missing
+ * service, as a tool would.
+ *
+ * @param ctx the Partner context, which must provide `storageDomain`
+ * @returns `{ store, policy }`
+ */
+export async function handles(ctx) {
+  if (!ctx.storageDomain) throw new Error('the Host provides no storageDomain service')
+  const [store, policy] = await Promise.all([openWorkingUnits(ctx), openPolicy(ctx)])
+  return { store, policy }
+}
+
 export function apply(ctx) {
   ctx.effect(() => ctx.systemPrompt.section({
     name: 'superagent-wish-partner',

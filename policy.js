@@ -18,6 +18,7 @@
 
 import { createHash } from 'node:crypto'
 import { policyTables } from './schema.js'
+import { deliver } from './sessions.js'
 
 /** Domain name; must match the Host's `^[a-z][a-z0-9_]*$`. */
 export const POLICY_DOMAIN = 'superagent_wish_policy'
@@ -164,4 +165,36 @@ export async function openPolicy(ctx) {
 export function holds(mandate, policy) {
   if (!mandate?.policyVersion) return false
   return mandate.policyVersion === policyVersion(policy)
+}
+
+/**
+ * Save new rules, then tell every unfinished unit the change bears on.
+ *
+ * The order is the prototype's: the policy is saved first, so a unit notified
+ * of the change already reads the new version when it revalidates. No unit's
+ * mandate is revoked and no unit is stopped: a running unit keeps working, and
+ * its worker is told what the rules now say.
+ *
+ * @param policy the open policy record
+ * @param store the open working unit tables
+ * @param ctx the executor's context, which the delivery reaches the Host through
+ * @param blocks the blocks to replace, such as `{ rules }`
+ * @param session the Partner Session, whose directory a reopened unit uses
+ * @returns `{ from, to, notified }`: the versions and the units told
+ */
+export async function savePolicy(policy, store, ctx, blocks, session) {
+  const { from, to, policy: saved } = await policy.setPolicy(blocks)
+  if (from === to) return { from, to, notified: [] }
+  const notified = await store.policyChanged({ from, to, rules: saved.rules })
+  // Each notice goes to the unit's worker in queue order; a unit whose worker
+  // cannot be reached keeps the notice queued, and the next delivery carries it.
+  for (const id of notified) {
+    const unit = store.get(id)
+    const queued = unit.undelivered
+      .map((inputId) => unit.inputs.find((item) => item.id === inputId))
+      .find((item) => item?.kind === 'policy-changed')
+    if (!queued) continue
+    await deliver(ctx, unit, queued, session)
+  }
+  return { from, to, notified }
 }
