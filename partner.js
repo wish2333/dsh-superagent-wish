@@ -10,7 +10,8 @@
  */
 
 import { advance } from './advance.js'
-import { sharedPolicy } from './policy.js'
+import { savePolicy, sharedPolicy } from './policy.js'
+import { SOURCE_IDS, sourceBlock } from './sources.js'
 import { openPump, slotsFor } from './pump.js'
 import { nextToStart, slotsFrom } from './queue.js'
 import { turnEnded } from './relay.js'
@@ -189,7 +190,62 @@ export const LIST_TOOL = {
   output,
 }
 
-export const TOOLS = [DISPATCH_TOOL, FOLLOWUP_TOOL, STOP_TOOL, LIST_TOOL]
+export const SETUP_TOOL = {
+  name: 'partner_setup',
+  description: [
+    'Read or change how external events are judged. Read-only when nothing is passed; every rule and every source configuration changes here.',
+    'Two sources feed the Secretary: files put into watched directories, and a schedule that patrols those directories on a period.',
+    'For a file source, config holds directories (absolute paths), types (a list of { match, defaultHandling, note }), and for a schedule, everySeconds.',
+    'Rules are the text the Secretary judges by, one per judgement. A change takes effect on the next judgement, without a restart.',
+    'Pass principalSessionId, the Session id of the wish conversation this setup belongs to: the Secretary session of a new Partner conversation is created beside it and judges by these rules.',
+    'Read it before changing it, and change one source or the rules at a time. A configuration that cannot run is refused and nothing is saved.',
+  ].join(' '),
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      principalSessionId: { type: 'string', description: 'The Session id of this Partner conversation. Omit it only when reading: a change is refused without it.' },
+      settings: {
+        type: 'object',
+        additionalProperties: false,
+        description: 'Omit the whole object to read the current setup. One of source or rules per call.',
+        properties: {
+          source: {
+            type: 'string',
+            enum: ['files', 'schedule'],
+            description: 'The source whose config to save: files watches directories, schedule patrols them on a period.',
+          },
+          config: {
+            type: 'object',
+            additionalProperties: true,
+            description: 'The source config. files: { directories, types: [{ match, defaultHandling, note }] }. schedule: { everySeconds, report }. enabled is set with the block.',
+          },
+          enabled: { type: 'boolean', description: 'Whether the source runs. Defaults to keeping what was stored.' },
+          rules: {
+            type: 'array',
+            description: 'The judging rules, replacing all of them. Each is { id, name, enabled, instruction }: the instruction is the rule text the Secretary reads.',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string', description: 'Short stable id, such as inbox-notes. A later notice names the rule by it.' },
+                name: { type: 'string', description: 'Optional short name for the rule.' },
+                enabled: { type: 'boolean', description: 'Whether the rule is in force. Defaults to true.' },
+                instruction: { type: 'string', description: 'The rule text: when a working unit is opened, and what to do when it is not.' },
+              },
+              required: ['id', 'instruction'],
+            },
+          },
+        },
+        required: [],
+      },
+    },
+    required: [],
+  },
+  output,
+}
+
+export const TOOLS = [DISPATCH_TOOL, FOLLOWUP_TOOL, STOP_TOOL, LIST_TOOL, SETUP_TOOL]
 
 /**
  * A Partner tool body: errors become one readable sentence, never a thrown
@@ -387,6 +443,89 @@ export async function stopUnit(ctx, store, slots, args) {
   )
 }
 
+/** The `rules` a call passes, validated, with every field the policy record holds. */
+function rulesOf(value) {
+  if (!Array.isArray(value)) throw new Error('rules must be a list of rule objects')
+  const ids = new Set()
+  return value.map((rule, index) => {
+    const field = `rules[${index}]`
+    if (rule === null || typeof rule !== 'object' || Array.isArray(rule)) throw new Error(`${field} must be an object`)
+    const id = String(rule.id ?? '').trim()
+    const instruction = String(rule.instruction ?? '').trim()
+    if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id)) throw new Error(`${field}.id must be a short identifier of letters, digits, '-' or '_'`)
+    if (ids.has(id)) throw new Error(`the rule id ${id} appears twice`)
+    ids.add(id)
+    if (!instruction) throw new Error(`${field}.instruction is the rule text and must not be empty`)
+    const rule_ = { id, instruction }
+    if (rule.name !== undefined) rule_.name = String(rule.name)
+    rule_.enabled = rule.enabled !== false
+    return rule_
+  })
+}
+
+/** One readable line per source block, or one saying the block is not set yet. */
+function describeSource(id, block) {
+  if (!block) return `${id}: not set (off)`
+  const { enabled, config } = block
+  if (id === 'files') {
+    const directories = config.directories.length ? config.directories.join(', ') : 'none'
+    const types = config.types.length
+      ? config.types.map((type) => `${type.match} → ${type.defaultHandling}${type.note ? ` (${type.note})` : ''}`).join('; ')
+      : 'none'
+    return `files: ${enabled ? 'on' : 'off'}; directories ${directories}; types ${types}`
+  }
+  return `schedule: ${enabled ? 'on' : 'off'}; every ${config.everySeconds}s; reports ${config.report}`
+}
+
+/**
+ * `partner_setup`: read the setup, or save one part of it.
+ *
+ * The rules and the two source blocks are the policy's blocks, so they are
+ * saved through the policy record and a change moves its version; the working
+ * units that are still open hear of the change as they do of any other.
+ */
+export async function setup(ctx, store, policy, args, exec) {
+  const settings = args.settings
+  if (settings === undefined) {
+    const current = policy.current()
+    const lines = [
+      'Rules:',
+      ...(current.rules.length
+        ? current.rules.map((rule) => `- ${rule.id}${rule.name ? ` (${rule.name})` : ''}: ${rule.enabled === false ? 'off — ' : ''}${rule.instruction}`)
+        : ['- none']),
+      'Sources:',
+      ...SOURCE_IDS.map((id) => `- ${describeSource(id, current.sources[id])}`),
+    ]
+    return textResult(lines.join('\n'))
+  }
+  if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('settings must be an object')
+  const saving = settings.rules !== undefined ? 'rules' : settings.source !== undefined ? 'source' : undefined
+  const extra = Object.keys(settings).filter((key) => !['rules', 'source', 'config', 'enabled'].includes(key) && settings[key] !== undefined)
+  if (!saving || extra.length) throw new Error('save one thing per call: settings.source with config and enabled, or settings.rules')
+  const principal = String(args.principalSessionId ?? '').trim()
+  if (!principal) throw new Error('a change needs principalSessionId, the Session id of the wish conversation it belongs to, so the rules reach that conversation\'s Secretary')
+
+  if (saving === 'rules') {
+    const rules = rulesOf(settings.rules)
+    const { from, to, notified } = await savePolicy(policy, store, ctx, { rules }, exec?.agent?.session)
+    const changed = from === to ? 'The rules are unchanged.' : `Saved ${rules.length} rule${rules.length === 1 ? '' : 's'}; the policy version is now ${to}.`
+    return textResult(`${changed} ${notified.length ? `${notified.length} open working unit(s) were told the rules changed.` : ''}`.trim(), { from, to, rules: rules.length })
+  }
+  const id = String(settings.source ?? '')
+  if (!SOURCE_IDS.includes(id)) throw new Error(`unknown source ${JSON.stringify(id)}; the sources are ${SOURCE_IDS.join(' and ')}`)
+  const previous = policy.current().sources[id]
+  let block
+  try {
+    block = sourceBlock(id, { enabled: settings.enabled, config: settings.config }, previous)
+  } catch (error) {
+    throw new Error(`the ${id} source was not saved: ${describe(error)}`)
+  }
+  const sources = { ...policy.current().sources, [id]: block }
+  const { from, to, notified } = await savePolicy(policy, store, ctx, { sources }, exec?.agent?.session)
+  const line = `${id} source saved${from === to ? ' (unchanged)' : ''}: ${describeSource(id, block)}`
+  return textResult(`${line}${notified.length ? ` ${notified.length} open working unit(s) were told the policy changed.` : ''}`, { id, from, to, config: block })
+}
+
 /** `partner_list`: every unit with its state, read-only. */
 export async function listUnits(store, args) {
   const units = store.list().filter((unit) => args.includeEnded !== false || unit.state !== 'ended')
@@ -455,6 +594,7 @@ export function apply(ctx, config) {
         partner_followup: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => followup(workerCtx, handle, rules, args, exec))),
         partner_stop: guarded((args) => store().then((handle) => stopUnit(workerCtx, handle, slots, args))),
         partner_list: guarded((args) => store().then((handle) => listUnits(handle, args))),
+        partner_setup: guarded((args, exec) => Promise.all([store(), policy()]).then(([handle, rules]) => setup(workerCtx, handle, rules, args, exec))),
       }
       for (const definition of TOOLS) {
         storeCtx.effect(() => workerCtx.tools.register({ ...definition, execute: bodies[definition.name] }))

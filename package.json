@@ -17,7 +17,8 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
     "./package.json": "./package.json",
-    "./relay": "./relay.js"
+    "./relay": "./relay.js",
+    "./sources": "./sources.js"
   },
   "files": [
     "index.js",
@@ -29,6 +30,7 @@
     "pump.js",
     "advance.js",
     "relay.js",
+    "sources.js",
     "sessions.js",
     "partner.js",
     "secretary.js",

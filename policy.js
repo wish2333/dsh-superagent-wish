@@ -146,9 +146,12 @@ export async function openPolicy(ctx) {
       for (const block of POLICY_BLOCKS) {
         if (blocks?.[block] !== undefined) next[block] = blocks[block]
       }
-      const to = policyVersion(next)
-      await table.put(CURRENT, { ...next, version: to, updatedAt: new Date().toISOString() })
-      return { from, to, policy: next }
+      // Every row is read back through its schema on the way in, so a block that
+      // does not fit the record is refused here rather than at the next open.
+      const record = policyTables.policy.parse({ ...next, version: policyVersion(next), updatedAt: new Date().toISOString() })
+      await table.put(CURRENT, record)
+      const to = record.version
+      return { from, to, policy: withDefaults(record) }
     },
 
     /**
