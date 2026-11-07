@@ -44,6 +44,12 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
   if (preset === undefined) {
     return failed(`Unknown worker type "${args.kind}". Use discoverer or implementer.`)
   }
+  // The caller is this Partner session; without it a worker's report has nowhere
+  // to go, so refuse before creating a session nobody can report back to.
+  const caller = exec && exec.agent && exec.agent.id
+  if (!caller) {
+    return failed('Dispatch needs the calling Partner session; this tool was called without one, so a worker could not report back.')
+  }
   const { sessionController, workspaceRegistry, permissionPresets, agents } = ctx
   if (!sessionController || !workspaceRegistry || !permissionPresets || !agents) {
     return failed('Worker dispatch needs the sessionController, workspaceRegistry, permissionPresets and agents Host services.')
@@ -66,8 +72,7 @@ export async function dispatch(ctx, args, exec, reportChannel = ctx.reportChanne
     permissionPresets.set(agent.session, 'danger-full-access')
     await sessionController.rename({ sessionId, title: args.title })
     if (reportChannel) {
-      const caller = exec && exec.agent && exec.agent.id
-      if (caller) reportChannel.adoptPartner(caller)
+      reportChannel.adoptPartner(caller)
       reportChannel.track(sessionId)
     }
     await agent.followup({ role: 'user', content: [{ type: 'text', text: args.body }] })

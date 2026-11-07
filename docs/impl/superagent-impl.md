@@ -38,6 +38,8 @@ Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，
 
 `followup` 送下一轮任务，`steer` 改动当前轮，`inject` 只写入历史不唤醒会话。回报用 `steer`，不用 `inject`：Partner 需要被唤醒才处理回报。
 
+**调用方会话**：`partner_dispatch` 从工具执行的 `exec.agent.id` 取 Partner 会话 id，不读 `ctx.session`（那要多注入一个 Host 服务，且缺失会让整个 preset 加载失败）。取不到时直接返回错误结果，不创建 Worker 会话——否则 Worker 的回报没有投递目标。
+
 **派发入口**：Partner preset 带 `partner_dispatch` 工具（参数：Worker 类型、目标、task spec 或 exploratory prompt），工具实现内部跑上表 0–6 步。两个 Worker preset 只带 `partner_report`，不带 `partner_dispatch`。
 
 **回报兜底**：监听 `agent/status`，Worker 转 `idle` 且上一轮没有 `partner_report`（或只有 `progress`）时，补一条 `waiting` 回报给 Partner，对齐原型 `src/executor/dsh.ts:657-669`。
