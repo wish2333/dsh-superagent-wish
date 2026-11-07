@@ -19,3 +19,21 @@ for (const [label, tool] of [['partner_dispatch', DISPATCH_TOOL], ['partner_repo
     assert.equal(blocks[0].text, 'hello')
   })
 }
+
+// A tool's `parameters` is the JSON Schema the provider receives. An
+// author-facing DSL property map without `type`/`properties` was sent verbatim
+// and made the provider reject every request in the session with a 400.
+for (const [label, tool] of [['partner_dispatch', DISPATCH_TOOL], ['partner_report', REPORT_TOOL]]) {
+  test(`${label} declares parameters as an object schema`, () => {
+    assert.equal(tool.parameters.type, 'object')
+    assert.equal(typeof tool.parameters.properties, 'object')
+    assert.ok(Array.isArray(tool.parameters.required))
+    for (const name of tool.parameters.required) {
+      assert.ok(tool.parameters.properties[name], `${name} is a declared property`)
+    }
+    for (const [name, property] of Object.entries(tool.parameters.properties)) {
+      assert.equal(property.type, 'string', `${name} declares a type`)
+      assert.equal(property.required, undefined, `${name} must not carry the DSH DSL key`)
+    }
+  })
+}

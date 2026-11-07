@@ -34,23 +34,28 @@ export const DISPATCH_TOOL = {
   description:
     'Start a worker session for a task. Call only after wish agrees to the dispatch. '
     + 'Use discoverer while options are still unclear, implementer once a direction is confirmed.',
+  // `ctx.tools.register` takes the JSON Schema the provider receives, not the
+  // author-facing DSL `defineTool` compiles. Passing the DSL here sends a
+  // schema without `type`/`properties`, and the provider rejects every request
+  // in that session with a 400.
   parameters: {
-    kind: {
-      type: 'string',
-      required: true,
-      enum: Object.keys(WORKER_KINDS),
-      description: 'Worker type: discoverer for exploration, implementer for delivery.',
+    type: 'object',
+    properties: {
+      kind: {
+        type: 'string',
+        enum: Object.keys(WORKER_KINDS),
+        description: 'Worker type: discoverer for exploration, implementer for delivery.',
+      },
+      title: {
+        type: 'string',
+        description: 'Short task title; the worker session is named after it.',
+      },
+      body: {
+        type: 'string',
+        description: 'The exploratory prompt or task spec, already formatted as text.',
+      },
     },
-    title: {
-      type: 'string',
-      required: true,
-      description: 'Short task title; the worker session is named after it.',
-    },
-    body: {
-      type: 'string',
-      required: true,
-      description: 'The exploratory prompt or task spec, already formatted as text.',
-    },
+    required: ['kind', 'title', 'body'],
   },
   output: { schema: { type: 'object' }, render: renderText },
 }
@@ -61,17 +66,19 @@ export const REPORT_TOOL = {
     'Report progress, ready, blocked or failed to Partner before a turn ends. '
     + 'Report blocked instead of deciding a product or scope question yourself.',
   parameters: {
-    state: {
-      type: 'string',
-      required: true,
-      enum: REPORT_STATES,
-      description: 'progress while working, ready when delivered, blocked when a decision is needed, failed when stuck.',
+    type: 'object',
+    properties: {
+      state: {
+        type: 'string',
+        enum: REPORT_STATES,
+        description: 'progress while working, ready when delivered, blocked when a decision is needed, failed when stuck.',
+      },
+      summary: {
+        type: 'string',
+        description: 'One short paragraph Partner can relay to wish.',
+      },
     },
-    summary: {
-      type: 'string',
-      required: true,
-      description: 'One short paragraph Partner can relay to wish.',
-    },
+    required: ['state', 'summary'],
   },
   output: { schema: { type: 'object' }, render: renderText },
 }
