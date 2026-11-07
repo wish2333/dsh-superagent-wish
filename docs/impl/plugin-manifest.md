@@ -5,14 +5,15 @@
 | 服务 | 用途 | 状态 |
 |---|---|---|
 | `agentPresets` | 注册五个 preset | 已验证（`register(definition)`、`resolve(id)`、`composedPreset(agent.ctx)`） |
-| `systemPrompt` | 向 Partner 注入协作模式行为规则 | 已验证（`section({ name, order, text })`） |
-| `storageDomain` | 工作单元、输入、派工、授权四张表；策略记录 | 已接入（`open(spec)`；域 `working_units` 表 `working_units` / `inputs` / `assignments` / `mandates`；域 `superagent_wish_policy` 表 `policy`） |
+| `systemPrompt` | 向各 preset 注入提示词 section（Partner、Secretary、两个 Worker） | 已验证（`section({ name, order, text })`） |
+| `tools` | 注册 `partner_*` 工具 | 已接入（`register(definition)`；工具缺席时 preset 不失败） |
+| `storageDomain` | 工作单元、输入、派工、授权、事件五张表；策略记录 | 已接入（`open(spec)`；域 `working_units` 表 `working_units` / `inputs` / `assignments` / `mandates` / `source_events`；域 `superagent_wish_policy` 表 `policy`） |
 | `workspaceRegistry` | 给每个工作单元建独立工作目录 | 已接入（`create(cwd)`，目录先 `mkdir`） |
 | `sessionController` | 起 Worker 与 Secretary 会话、取名、取回会话、指定模型 | 已接入（`create` / `rename` / `resolveAgent` / `selectModel`） |
 | `permissionPresets` | 设 Worker 会话权限 | 已接入（`set(session, 'danger-full-access')`） |
 | `agents` | 取 live Agent，叫停当前派工 | 已接入（`get(id)`，再调 `agent.cancel({ kind: 'user' }, { keepInbox: true })`） |
 | `workingDirectory` | 取 Partner 会话自己的工作目录，作为工作单元目录的基准 | 已接入（`get(session)`，缺少时退回 `defaultDirectory`） |
-| `schedule` | 定时巡查：到点把一个 Secretary 会话叫起来记录一次巡查 | 已接入（`create` / `edit` / `pause`） |
+| `schedule` | 定时巡查：到点把一个 Secretary 会话叫起来记录一次巡查 | 已接入（`create` / `edit`（pause、update）/ `view`）。没有这个服务时只缺巡查任务，文件事件的判断照常 |
 
 验证依据：`/Applications/DeepSeek Harness.app/Contents/Resources/app.asar` 的类型声明。
 

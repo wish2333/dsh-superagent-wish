@@ -30,7 +30,7 @@ Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，
 | 步骤 | 接口 | 说明 |
 |---|---|---|
 | 0. 查会话 | `ctx.sessionController.resolveAgent(sessionId)` | 会话已存在就复用，不重复创建 |
-| 1. 建工作目录 | `mkdir(cwd, { recursive: true })` → `ctx.workspaceRegistry.create(cwd, title)` | 每个 Worker 一个独立目录。`create` 要求目录已存在，所以先建；基准取 Partner 会话自己的工作目录，取不到时退回 `workingDirectory.defaultDirectory`。不要用 Host 的 profile 目录做基准 |
+| 1. 建工作目录 | `mkdir(cwd, { recursive: true })` → `ctx.workspaceRegistry.create(cwd)` | 每个 Worker 一个独立目录。`create` 要求目录已存在，所以先建；基准取 Partner 会话自己的工作目录，取不到时退回 `workingDirectory.defaultDirectory`。不要用 Host 的 profile 目录做基准 |
 | 2. 起 Worker 会话 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` | `agentPreset` 指定启发者或执行者 |
 | 3. 取到会话 | `ctx.sessionController.resolveAgent(sessionId)` | 返回 live Agent |
 | 4. 设权限 | `ctx.permissionPresets.set(session, 'danger-full-access')` | 与原型一致 |
@@ -40,34 +40,36 @@ Partner 与 Worker 的会话关系由 R28 定：两者都是独立 DSH 会话，
 
 `followup` 送下一轮任务，`steer` 改动当前轮，`inject` 只写入历史不唤醒会话。回报用 `steer`，不用 `inject`：Partner 需要被唤醒才处理回报。
 
-**回报通道**：通道是 Partner preset 加载时创建的单例，放在模块级而不是 `ctx` 上——Cordis 拒绝读取未注入的上下文属性，Worker preset 又不在创建它的作用域里。
+**回报通道**：回报通道在 `relay.js`，去重状态放在模块级而不是 `ctx` 上——Cordis 拒绝读取未注入的上下文属性，各 preset 又是独立作用域。
 
-**会话身份**：每次派发生成独立 `sessionId`（标题 slug + 随机后缀）。用标题推导会复用该标题已占用的会话，包括一个坏掉的会话。
+**会话身份**：Worker 会话 id 与工作目录都由工作单元 id 派生（ADR-0006）：会话 `superagent-wish-<工作单元 id>`，目录 `<Partner 会话目录>/superagent-wish/<工作单元 id>`。同一工作单元的每一轮都在同一个会话、同一个目录里；会话被外部删除时，按同一个 id 在下次投递时重建，目录原样沿用；标题只重命名会话，不改目录。用标题推导会复用该标题已占用的会话，包括一个坏掉的会话。
 
 **调用方会话**：`partner_dispatch` 从工具执行的 `exec.agent.id` 取 Partner 会话 id，不读 `ctx.session`（那要多注入一个 Host 服务，且缺失会让整个 preset 加载失败）。取不到时直接返回错误结果，不创建 Worker 会话——否则 Worker 的回报没有投递目标。
 
-**派发入口**：Partner preset 带 `partner_dispatch` 工具（参数：Worker 类型、目标、task spec 或 exploratory prompt），工具实现内部跑上表 0–6 步。两个 Worker preset 只带 `partner_report`，不带 `partner_dispatch`。
+**派发入口**：Partner preset 带 `partner_dispatch` 工具（参数：Worker 类型、标题、首条输入——task spec 或 exploratory prompt，可选模型），工具实现内部跑上表 0–6 步。两个 Worker preset 只带 `partner_report`，不带 `partner_dispatch`。
 
 **回报兜底**：监听 `agent/status`，Worker 转 `idle` 且上一轮没有 `partner_report`（或只有 `progress`）时，补一条 `waiting` 回报给 Partner，与原型 `src/executor/dsh.ts:657-669` 同法。
 
 监听必须带 `{ global: true }`：Worker 跑在自己的 preset 作用域里，作用域内监听收不到它的状态事件，兜底就永远不触发。
 
-**实现落点**：Partner preset 加载时绑定回报通道并监听 `agent/status`；派发时把 Worker 会话登记进通道；Worker 的 `partner_report` 调通道的 `record`，通道按 `worker|turn|state|summary` 去重后以 `steer` 投递给 Partner 会话。
+**实现落点**：Partner preset 加载时监听 `agent/status`；Worker 的 `partner_report` 把回报写进工作单元表，`relay.js` 按回报键（Partner 会话、工作单元、轮次、状态、摘要、来源）去重后以 `steer` 投递给 Partner 会话。
 
 插件声明的依赖：
 
 ```js
 // manager
-export const inject = ['agentPresets']
+export const inject = ['agentPresets', 'storageDomain']
 // partner submodule
+export const inject = ['systemPrompt', 'tools', 'storageDomain']
+// secretary submodule
+export const inject = ['systemPrompt', 'tools', 'storageDomain', 'sessionController']
+// worker submodules（worker-discoverer / worker-implementer）
 export const inject = ['systemPrompt', 'tools']
-// worker submodules
-export const inject = ['systemPrompt', 'tools', 'agents']
 ```
 
 派发路径要读的 Host 服务在 `ctx.inject([...])` 的子作用域里声明：`sessionController`、`workspaceRegistry`、`permissionPresets`、`agents`、`workingDirectory`。Cordis 拒绝读取未声明的服务；声明在子作用域，缺服务时只是工具不注册，不会让整个 preset 加载失败。
 
-**模型**：派发时不指定，Worker 会话用默认模型。
+**模型**：`partner_dispatch` 可以带 `model` 参数（`provider`、`model`，可带 `reasoningEffort`）；不带就用会话默认。派发时先核对模型，Host 没有的模型直接拒绝，不留工作单元；排队的工作单元把模型记在表里，轮到它启动时再选定。
 
 ---
 
@@ -116,11 +118,11 @@ export const inject = ['systemPrompt', 'tools', 'agents']
 | `partner_patrol` | Secretary | 定时任务到点时记录一次巡查 | 已实现 |
 | `partner_read_conversation` | Secretary | 只读地读当前 Partner 对话最近的几条消息 | 已实现 |
 
-附录入按工作单元的队列投递：Worker 用 `followup` 收下一条输入，空闲时开新一轮，运行中排到下一轮。Partner 按工作单元 id 引用，不记 Worker 会话 id。
+追加输入按工作单元的队列投递：Worker 用 `followup` 收下一条输入，空闲时开新一轮，运行中排到下一轮。Partner 按工作单元 id 引用，不记 Worker 会话 id。
 
 **现状**：九个工具都已实现。Worker 会话 id 与工作目录都由工作单元 id 派生（`superagent-wish-<工作单元 id>`），会话被外部删除时下次投递按同一个 id 重建。回报以 `agent-message` 推给 Partner，`ready`、`blocked`、`failed` 和提问推，`progress` 与 `dropped` 不推，一轮没有回报时补一条 `waiting`。
 
-**多任务体系**：Ticket / Input / Assignment / Mandate 这一档已经确定要做，方案见 `../design/working-unit.md`。这些模型不属于团队场景：个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
+**多任务体系**：Ticket / Input / Assignment / Mandate 这一档已实现，见 `../design/working-unit.md`。这些模型不属于团队场景：个人用户同样需要知道一个活做到哪一步、把几条追问排队、限制 Worker 只碰指定文件。
 
 ---
 
@@ -143,7 +145,7 @@ Worker 的回报经 `steer` 送进 Partner，由 Partner 整合后交给你，�
 | 启发者 | 提炼选项和盲点，读它写下的产出文件，并入当前需求模型，标“推断”或“启发者建议” |
 | 执行者 | 核查交付物是否符合 task spec；有偏差按原因＋影响＋选项汇报 |
 
-回报用 `partner_report` 提交，状态取 `progress` / `ready` / `blocked` / `failed` / `waiting` 之一，附摘要。`progress` 只在你要求时带回；其余四种一律带回。
+回报用 `partner_report` 提交，状态取 `progress` / `ready` / `blocked` / `failed` / `dropped` 之一，附摘要。推与不推由代码按状态决定：`ready`、`blocked`、`failed` 和带提问的回报推给 Partner，`progress` 与 `dropped` 不推；一轮结束没有回报时，插件补一条 `waiting`。
 
 ---
 

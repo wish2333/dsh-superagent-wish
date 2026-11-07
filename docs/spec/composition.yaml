@@ -51,6 +51,6 @@ runtime_binding:
     delivery: agent.followup
     report_relay: agent.steer
     permission_mode: danger-full-access
-    model: default
+    model: partner_dispatch 可指定 provider/model（可带 reasoningEffort），缺省用会话默认
     followup: partner_followup
     stop: partner_stop

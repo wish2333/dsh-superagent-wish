@@ -43,8 +43,8 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 ## 三、工具边界
 
 | 工具 | 启发者 | 执行者 |
-| 来源插件 | 见 ADR-0003 | 见 ADR-0003 |
 |---|---|---|
+| 来源插件 | 见 ADR-0003 | 见 ADR-0003 |
 | `read` | 有 | 有 |
 | `glob` | 有 | 有 |
 | `grep` | 有 | 有 |
@@ -74,7 +74,7 @@ Worker 是独立 DSH 会话，与 Partner 不属于同一会话树。Partner 不
 | 回报回传 | 队列 → `agent.steer(report)` 送进 Partner；一轮结束无回报时补一条 `waiting` |
 | 派发入口 | Partner preset 的 `partner_dispatch` 工具；Worker preset 无此工具 |
 | 追加与中止 | `partner_followup` 投给工作单元当前的 Worker 会话；`partner_stop` 中止当前一轮 |
-| 模型 | 不指定，用会话默认 |
+| 模型 | 可在 `partner_dispatch` 里指定（`provider`、`model`，可带 `reasoningEffort`）；不指定用会话默认 |
 
 ---
 

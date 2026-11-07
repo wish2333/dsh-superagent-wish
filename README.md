@@ -2,14 +2,22 @@
 
 A DeepSeek Harness bundle that adds **Partner**, a super-agent preset for a personal AI workflow. Partner talks to wish and dispatches work; each piece of work is a **working unit** that keeps its own state, inputs and worker, so wish can keep talking to it instead of starting over.
 
-When the Partner preset is selected in a session, the agent receives the collaboration protocol as part of its system prompt:
+When the Partner preset is selected in a session, the agent receives a prompt section
+(`PARTNER_SECTION` in `partner.js`) that fixes the working-unit protocol:
 
-- **Topic anchoring** — restates the session topic at the start and after any tangent, and keeps a balance between a result-driven and an exploratory discussion.
-- **Layered requirement building** — merges every addition into one shared requirement model, marking each item as stated or inferred.
-- **Human-owned decisions** — assembles authoritative sources, current state, requirements, and options before presenting them; gives opinions only when asked.
-- **Confirm then dispatch** — always confirms before handing off a task; only reports blockers during execution.
-- **Worker dispatch by thinking mode** — divergent exploration goes to a discoverer, a confirmed direction goes to an implementer. Each Worker is a separate DSH session with its own preset and working directory.
-- **Sparse interruption** — only during execution. Deep discussion happens at other times.
+- **Confirm then dispatch** — a unit is started only after wish agrees to the job.
+- **Working units, not sessions** — Partner names a job by its working unit id, never by a
+  session id; `partner_followup` continues the same unit, the same Worker session and the
+  same directory.
+- **Worker dispatch by thinking mode** — an open question goes to a discoverer, an agreed
+  direction to an implementer.
+- **Reports are Worker messages** — a report is read as "a Worker reported this", `ready`
+  results are checked against what wish asked for, and a `blocked` or `failed` report is
+  answered with cause, effect and options, without a recommendation unless asked.
+
+The fuller collaboration behaviour — topic anchoring, layered requirement building,
+human-owned decisions, sparse interruption — is specified in
+`docs/spec/interaction-spec.md`; it is not part of the prompt today.
 
 A **Secretary** session is created alongside each new Partner session. It judges whether an incoming file or scheduled event should become a working unit, and speaks only when wish must decide something.
 
@@ -19,7 +27,7 @@ A **Secretary** session is created alongside each new Partner session. It judges
 - For the working-unit tables: `storageDomain`.
 - For dispatch: `sessionController`, `workspaceRegistry`, `permissionPresets`, `agents` and
   `workingDirectory`. A Worker is a separate DSH session, not a subagent (R28).
-- For the Secretary: `sessionController` and the `agent-presets` registry events
+- For the Secretary: `sessionController`, `agents` and the `agent-presets` registry events
   (`agent-preset/selected`, `agent/created`).
 - For the schedule source: `schedule`. A Host without it reads no scheduled event and opens
   no patrol task; the file source and everything else still run.

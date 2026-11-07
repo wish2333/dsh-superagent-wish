@@ -106,13 +106,15 @@ Partner 确认后调 `partner_dispatch`，工具内部按下表派发，接口�
 
 | 步骤 | 动作 |
 |---|---|
+| 0 | `ctx.sessionController.resolveAgent(sessionId)` 先查会话，已存在就复用，不重复创建 |
 | 1 | `mkdir` 后 `ctx.workspaceRegistry.create(cwd)` 建这个工作单元的工作目录；追问沿用，不重建 |
 | 2 | `ctx.sessionController.create({ sessionId, workspaceId, agentPreset })` 起会话，启发者或执行者 |
-| 3 | `ctx.permissionPresets.set(session, 'danger-full-access')` 设权限 |
-| 4 | `ctx.sessionController.rename({ sessionId, title })` 用任务标题命名 |
-| 5 | `agent.followup(message)` 送 exploratory prompt 或 task spec |
+| 3 | `ctx.sessionController.resolveAgent(sessionId)` 再取一次，拿到 live Agent |
+| 4 | `ctx.permissionPresets.set(session, 'danger-full-access')` 设权限 |
+| 5 | `ctx.sessionController.rename({ sessionId, title })` 用任务标题命名 |
+| 6 | `agent.followup(message)` 送 exploratory prompt 或 task spec |
 
-Worker 是独立 DSH 会话，不是子代理。模型不指定，用会话默认。`partner_dispatch` 只挂在 Partner preset，Worker 会话里没有这个工具。
+Worker 是独立 DSH 会话，不是子代理。模型可以在 `partner_dispatch` 里指定（`provider`、`model`，可带 `reasoningEffort`）；不指定就用会话默认。`partner_dispatch` 只挂在 Partner preset，Worker 会话里没有这个工具。
 
 ---
 
@@ -164,17 +166,22 @@ Worker 类型：[启发者 / 执行者]
 
 回报由 Worker 调 `partner_report` 提交，以 `agent-message` 为来源、带 `form: 'relay'` 和发送方会话 id，用 `steer` 送进 Partner，Partner 按“某个 Worker 报了什么”来读。
 
-推不推由代码按状态决定：`ready`、`blocked`、`failed` 和提问推给 Partner；`progress` 不推；`dropped` 直接结束单元，不发消息。送进 Partner 的正文形如：
+推不推由代码按状态决定：`ready`、`blocked`、`failed` 和提问推给 Partner；`progress` 不推；`dropped` 直接结束单元，不发消息。送进 Partner 的是一条 JSON 正文，形如：
 
+```json
+{
+  "kind": "worker_report",
+  "unit_id": "unit-3",
+  "title": "Explore macOS",
+  "worker_type": "discoverer",
+  "state": "ready",
+  "summary": "[Worker 写的摘要]",
+  "at": "2026-11-08T02:30:00.000Z",
+  "fromSessionId": "superagent-wish-unit-3"
+}
 ```
-Worker (discoverer session superagent-wish-discoverer-mac-3f2a1b7c) "Explore macOS" reported ready:
 
-[Worker 写的摘要]
-
-Read session superagent-wish-discoverer-mac-3f2a1b7c for the full trace; do not relay it verbatim.
-```
-
-摘要的内容按状态不同，要求见 Worker 提示词“摘要写什么”一节。
+摘要写什么，要求见 `partner_report` 工具自己的描述；Worker 提示词（`worker-discoverer.js`、`worker-implementer.js`）约定回合结束前必须调用它。
 
 | 状态 | 含义 | Partner 是否带回给你 |
 |---|---|---|
